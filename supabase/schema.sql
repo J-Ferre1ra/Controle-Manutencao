@@ -42,6 +42,7 @@ create table public.access_profiles (
   created_at timestamptz not null default now(),
   constraint admin_has_no_team check (not is_admin or team_id is null),
   constraint team_profile_has_team check (is_admin or team_id is not null),
+  constraint team_profile_has_kind check (is_admin or kind is not null),
   constraint contractor_requires_responsible check (
     is_admin or kind <> 'contractor' or nullif(btrim(responsible_name), '') is not null
   )
@@ -235,5 +236,19 @@ create policy admin_can_add_execution_record on public.execution_records for ins
   with check (public.has_admin_access());
 
 -- Os registros de execução são históricos: não conceder UPDATE/DELETE às equipes.
--- Criar um bucket privado `evidencias-impedimento` no Supabase Storage. Salvar cada arquivo
--- em `{order_id}/{arquivo}` e criar políticas de Storage que validem can_access_order(order_id).
+-- Fotos ficam privadas e seguem o mesmo escopo da ordem. O cliente deve enviar em
+-- `{order_id}/{arquivo}` depois de registrar o impedimento.
+insert into storage.buckets (id, name, public)
+values ('evidencias-impedimento', 'evidencias-impedimento', false)
+on conflict (id) do update set public = false;
+
+create policy impediment_evidence_read_scope on storage.objects for select to authenticated
+  using (
+    bucket_id = 'evidencias-impedimento'
+    and public.can_access_order(split_part(name, '/', 1)::uuid)
+  );
+create policy impediment_evidence_upload_scope on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'evidencias-impedimento'
+    and public.can_access_order(split_part(name, '/', 1)::uuid)
+  );
