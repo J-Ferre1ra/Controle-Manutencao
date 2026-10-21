@@ -13,8 +13,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "controle-ordens-neoenergia",
-      "database_id": "PREENCHER_COM_O_ID_DO_D1",
+      "database_name": "controle-ordens",
+      "database_id": "50540b3c-abbd-4c3c-8397-bbf991c0f629",
       "migrations_dir": "drizzle"
     }
   ]
