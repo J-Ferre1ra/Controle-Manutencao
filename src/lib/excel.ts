@@ -267,6 +267,7 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
       if (key === 'QTD EXECUTADA') return order.qtdExecutada ?? '';
       if (key === 'QTD CONSIDERADA') return '';
       if (key === 'EQUIPE') return order.equipe || 'Sem equipe';
+      if (key === 'EMPRESA') return order.empresa || 'Sem empresa';
       if (key === 'SITUACAO DA EXECUCAO') return statusLabel(order.status);
       if (key === 'MOTIVO DO IMPEDIMENTO') return order.motivoImpedimento ?? '';
       if (key === 'OBSERVACAO') return order.observacao ?? '';
