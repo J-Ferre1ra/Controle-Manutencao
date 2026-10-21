@@ -7,10 +7,13 @@ import type { ParsedWorkbook } from './lib/excel';
 import type { AccessProfile, AdminPage, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
 
 const kindLabels: Record<ProfileKind, string> = {
-  inspecao: 'Inspeção',
-  terceirizada: 'Terceirizada',
-  propria: 'Própria Neoenergia',
+  inspetor: 'Inspetor',
+  vencer: 'Vencer',
+  nper: 'NPER',
+  neoenergia: 'Neoenergia',
 };
+
+const supervisorDemoCredentials = { code: 'SUPERVISOR', password: 'demo' };
 
 const pageLabels: Record<AdminPage, { title: string; subtitle: string }> = {
   painel: { title: 'Visão geral', subtitle: 'Ordens executadas, pendências e produtividade das equipes.' },
@@ -28,6 +31,33 @@ function normalize(value: string): string {
 function parseQuantity(value: string): number {
   const match = value.replace(',', '.').match(/-?\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : 0;
+}
+
+type ImportSource = 'controle' | 'inspecao' | 'nper' | 'vencer';
+
+function chooseImportSheet(workbook: ParsedWorkbook['workbook'], source: ImportSource): string {
+  const preferredNames: Record<ImportSource, string[]> = {
+    controle: ['acompanhamento'],
+    inspecao: ['export'],
+    nper: ['lv propria', 'planilha1', 'planilha2', 'planilha3'],
+    vencer: ['cart out', 'planilha1', 'planilha2'],
+  };
+  const normalizedSheetName = (name: string) => normalize(name).replace(/[^a-z0-9]+/g, ' ').trim();
+  const scoreSheet = (name: string) => {
+    const headers = Object.keys(rowsFromSheet(workbook, name)[0]?.values ?? {})
+      .map((header) => normalizedSheetName(header));
+    const hasOrder = headers.some((header) => ['os', 'ordem', 'num consequencia', 'numero da ordem'].includes(header));
+    const hasQuantity = headers.some((header) => /^(qtd|quant|quantidade|km plano)( |$)/.test(header));
+    const hasService = headers.some((header) => ['defeito', 'tipo emr', 'servico', 'descricao'].includes(header));
+    return { name, score: Number(hasOrder) * 4 + Number(hasQuantity) * 2 + Number(hasService), usable: hasOrder && (hasQuantity || hasService) };
+  };
+  for (const preferred of preferredNames[source]) {
+    const match = workbook.SheetNames.find((name) => normalizedSheetName(name) === preferred);
+    if (match && scoreSheet(match).usable) return match;
+  }
+
+  const ranked = workbook.SheetNames.map(scoreSheet).sort((a, b) => b.score - a.score);
+  return ranked[0]?.score ? ranked[0].name : workbook.SheetNames[0] || '';
 }
 
 function quantityUnit(value: string): string {
@@ -72,6 +102,7 @@ export default function App() {
   const [imports, setImports] = useState<ImportRecord[]>(loadImports);
   const [session, setSession] = useState<SessionProfile | null>(null);
   const [adminMode, setAdminMode] = useState(false);
+  const [supervisorLoginOpen, setSupervisorLoginOpen] = useState(false);
 
   useEffect(() => saveOrders(orders), [orders]);
   useEffect(() => saveProfiles(profiles), [profiles]);
@@ -86,7 +117,7 @@ export default function App() {
         setProfiles={setProfiles}
         imports={imports}
         setImports={setImports}
-        onLogout={() => setAdminMode(false)}
+        onLogout={() => { setAdminMode(false); setSupervisorLoginOpen(false); }}
         onReset={() => {
           resetDemoData();
           setOrders(demoOrders);
@@ -101,7 +132,11 @@ export default function App() {
     return <FieldApp session={session} orders={orders} setOrders={setOrders} onLogout={() => setSession(null)} />;
   }
 
-  return <LoginScreen profiles={profiles} onLogin={setSession} onOpenAdmin={() => setAdminMode(true)} />;
+  if (supervisorLoginOpen) {
+    return <SupervisorLogin onBack={() => setSupervisorLoginOpen(false)} onLogin={() => { setSupervisorLoginOpen(false); setAdminMode(true); }} />;
+  }
+
+  return <LoginScreen profiles={profiles} onLogin={setSession} onOpenAdmin={() => setSupervisorLoginOpen(true)} />;
 }
 
 function LoginScreen({
@@ -113,10 +148,9 @@ function LoginScreen({
   onLogin: (session: SessionProfile) => void;
   onOpenAdmin: () => void;
 }) {
-  const [kind, setKind] = useState<ProfileKind>('inspecao');
+  const [kind, setKind] = useState<ProfileKind>('inspetor');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
-  const [operatorName, setOperatorName] = useState('');
   const [error, setError] = useState('');
   const matched = profiles.find((profile) => profile.kind === kind && normalize(profile.code) === normalize(code));
 
@@ -130,16 +164,12 @@ function LoginScreen({
       setError('Código, senha ou perfil inválido. Confira os dados ou peça ajuda ao supervisor.');
       return;
     }
-    if (!operatorName.trim()) {
-      setError('Informe o nome de quem está registrando os serviços.');
-      return;
-    }
     onLogin({
       kind: profile.kind,
       label: profile.label,
       team: profile.team,
       responsible: profile.responsible,
-      operatorName: operatorName.trim(),
+      operatorName: profile.operatorName?.trim() || profile.responsible?.trim() || profile.label,
     });
   }
 
@@ -147,7 +177,6 @@ function LoginScreen({
     setKind(profile.kind);
     setCode(profile.code);
     setPassword(profile.password);
-    setOperatorName(profile.responsible || 'Carlos Menezes');
     setError('');
   }
 
@@ -156,20 +185,20 @@ function LoginScreen({
       <section className="login-card">
         <div className="login-brand-panel"><Brand /></div>
         <h1>Acesso da equipe</h1>
-        <p className="login-intro">Selecione o tipo de equipe, informe o código e diga quem está registrando.</p>
+        <p className="login-intro">Selecione o tipo de acesso e informe o código e a senha fornecidos pelo supervisor.</p>
 
         <form onSubmit={handleSubmit} className="login-form">
           <fieldset className="field-group">
             <legend>Tipo de equipe</legend>
-            <div className="segmented-control segmented-three">
-              {(['inspecao', 'terceirizada', 'propria'] as ProfileKind[]).map((option) => (
+            <div className="segmented-control segmented-four">
+              {(['inspetor', 'vencer', 'nper', 'neoenergia'] as ProfileKind[]).map((option) => (
                 <button
                   type="button"
                   key={option}
                   className={kind === option ? 'segment active' : 'segment'}
                   onClick={() => { setKind(option); setCode(''); setPassword(''); }}
                 >
-                  {option === 'inspecao' ? 'Inspetoria' : option === 'terceirizada' ? 'Terceirizada' : 'Própria'}
+                  {kindLabels[option]}
                 </button>
               ))}
             </div>
@@ -185,33 +214,63 @@ function LoginScreen({
             <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Digite a senha do perfil" autoComplete="current-password" />
           </label>
 
-          {kind === 'terceirizada' && matched?.responsible && (
+          {(kind === 'vencer' || kind === 'nper') && matched?.responsible && (
             <div className="responsible-confirmation"><span>Responsável vinculado</span><strong>{matched.responsible}</strong></div>
           )}
-
-          <label className="field-group">
-            <span>Nome de quem está registrando</span>
-            <input value={operatorName} onChange={(event) => setOperatorName(event.target.value)} placeholder="Ex.: João Silva" autoComplete="name" />
-          </label>
 
           {error && <div className="inline-error" role="alert">{error}</div>}
           <button className="button button-primary button-full" type="submit">Entrar nas ordens</button>
         </form>
 
         <p className="login-note">As ordens aparecem conforme o perfil autorizado pelo supervisor.</p>
-        <button className="button button-outline button-full" onClick={onOpenAdmin}>Ver área administrativa • supervisor</button>
+        <button className="button button-outline button-full" onClick={onOpenAdmin}>Acesso do supervisor</button>
 
         <details className="demo-access">
           <summary>Acessos da demonstração</summary>
           <div className="demo-access-list">
             {profiles.filter((profile) => profile.active).map((profile) => (
               <button type="button" key={profile.id} onClick={() => fillDemo(profile)}>
-                <span>{profile.label}</span><code>{profile.code} / {profile.password}</code>
+                <span>{profile.label}<small>{profile.operatorName || profile.responsible || profile.label}</small></span><code>{profile.code} / {profile.password}</code>
               </button>
             ))}
             <small>Dados demonstrativos, salvos apenas neste navegador.</small>
           </div>
         </details>
+      </section>
+      <div className="prototype-warning">Protótipo demonstrativo • não use informações operacionais reais</div>
+    </main>
+  );
+}
+
+function SupervisorLogin({ onBack, onLogin }: { onBack: () => void; onLogin: () => void }) {
+  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (normalize(code) !== normalize(supervisorDemoCredentials.code) || password !== supervisorDemoCredentials.password) {
+      setError('Código ou senha do supervisor inválidos.');
+      return;
+    }
+    onLogin();
+  }
+
+  return (
+    <main className="login-page">
+      <section className="login-card">
+        <div className="login-brand-panel"><Brand /></div>
+        <h1>Área do supervisor</h1>
+        <p className="login-intro">Entre com o acesso administrativo para consultar e administrar as carteiras.</p>
+        <form onSubmit={submit} className="login-form">
+          <label className="field-group"><span>Código do supervisor</span><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} autoComplete="username" /></label>
+          <label className="field-group"><span>Senha</span><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
+          {error && <div className="inline-error" role="alert">{error}</div>}
+          <button className="button button-primary button-full" type="submit">Entrar na administração</button>
+        </form>
+        <button className="button button-ghost button-full" onClick={onBack}>Voltar ao acesso das equipes</button>
+        <details className="demo-access"><summary>Acesso demonstrativo</summary><div className="demo-access-list"><div className="supervisor-demo-credential"><code>SUPERVISOR / demo</code><small>Somente para esta prévia.</small></div></div></details>
+        <div className="security-note"><strong>Protótipo demonstrativo</strong><span>Este login é uma barreira de demonstração. A autenticação real precisa ser validada no servidor antes de usar dados operacionais.</span></div>
       </section>
       <div className="prototype-warning">Protótipo demonstrativo • não use informações operacionais reais</div>
     </main>
@@ -234,7 +293,7 @@ function FieldApp({
   const [query, setQuery] = useState('');
   const [orderId, setOrderId] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<Order | null>(null);
-  const [quantity, setQuantity] = useState(0);
+  const [quantity, setQuantity] = useState<number | null>(null);
   const [executionMode, setExecutionMode] = useState<'executada' | 'impedimento'>('executada');
   const [observation, setObservation] = useState('');
   const [reason, setReason] = useState('');
@@ -251,7 +310,7 @@ function FieldApp({
     const isDone = order.status !== 'pendente';
     const matchesTab = tab === 'pendentes' ? !isDone : isDone;
     const search = normalize(query);
-    const matchesSearch = !search || [order.numConsequencia, order.alimentador, order.barramento, order.servico, order.responsavel]
+    const matchesSearch = !search || [order.numConsequencia, order.alimentador, order.barramento, order.servico, order.responsavel, order.registradoPor]
       .some((value) => normalize(value || '').includes(search));
     return matchesTab && matchesSearch;
   }), [assignedOrders, query, tab]);
@@ -260,7 +319,7 @@ function FieldApp({
 
   function openOrder(order: Order) {
     setOrderId(order.id);
-    setQuantity(order.qtdExecutada ?? parseQuantity(order.qtdAjustada));
+    setQuantity(null);
     setExecutionMode('executada');
     setObservation('');
     setReason('');
@@ -288,14 +347,18 @@ function FieldApp({
       setError('Informe o motivo e explique o impedimento antes de salvar.');
       return;
     }
-    if (executionMode === 'executada' && quantity < 0) {
+    if (executionMode === 'executada' && quantity === null) {
+      setError('Informe a quantidade realmente executada para este serviço.');
+      return;
+    }
+    if (executionMode === 'executada' && quantity !== null && quantity < 0) {
       setError('A quantidade realizada não pode ser negativa.');
       return;
     }
     const updated: Order = {
       ...selectedOrder,
       status: executionMode,
-      qtdExecutada: executionMode === 'executada' && session.kind !== 'inspecao' ? quantity : undefined,
+      qtdExecutada: executionMode === 'executada' ? quantity ?? undefined : undefined,
       observacao: observation.trim(),
       motivoImpedimento: executionMode === 'impedimento' ? reason : undefined,
       foto: executionMode === 'impedimento' ? photo : undefined,
@@ -327,7 +390,7 @@ function FieldApp({
             <Detail label="Equipe" value={lastSaved.equipe + ' • ' + kindLabels[session.kind]} />
             <Detail label="Responsável" value={lastSaved.responsavel || '—'} />
             <Detail label="Registrado por" value={lastSaved.registradoPor || '—'} />
-            <Detail label="Quantidade" value={lastSaved.qtdExecutada === undefined ? 'Não informada' : lastSaved.qtdExecutada + ' realizada(s)'} />
+            <Detail label="Quantidade" value={lastSaved.qtdExecutada === undefined ? 'Sem execução (impedimento)' : lastSaved.qtdExecutada + ' realizada(s)'} />
             <Detail label="Situação" value={statusText(lastSaved.status)} />
             <Detail label="Data" value={formatDate(lastSaved.dataRegistro)} />
           </section>
@@ -355,15 +418,13 @@ function FieldApp({
 
           {executionMode === 'executada' ? (
             <>
-              {session.kind !== 'inspecao' && <>
-                <label className="section-label quantity-label">Quantidade realizada</label>
-                <div className="quantity-stepper">
-                  <button type="button" className="step-button" aria-label="Diminuir quantidade" onClick={() => setQuantity((value) => Math.max(0, Math.round((value - 1) * 100) / 100))}>−</button>
-                  <div className="quantity-value"><strong>{quantity}</strong><span>{unit || 'unidades'}</span></div>
-                  <button type="button" className="step-button step-plus" aria-label="Aumentar quantidade" onClick={() => setQuantity((value) => Math.round((value + 1) * 100) / 100)}>+</button>
-                </div>
-                <p className="quantity-rule">Previsto: {selectedOrder.qtdAjustada || '—'} · O consolidado usará a quantidade realizada informada.</p>
-              </>}
+              <label className="section-label quantity-label" htmlFor="quantity-completed">Quantidade realmente executada</label>
+              <div className="quantity-stepper">
+                <button type="button" className="step-button" aria-label="Diminuir quantidade" onClick={() => setQuantity((value) => Math.max(0, Math.round(((value ?? 0) - 1) * 100) / 100))}>−</button>
+                <div className="quantity-value"><input id="quantity-completed" className="quantity-number-input" type="number" min="0" step="0.01" value={quantity ?? ''} onChange={(event) => setQuantity(event.target.value === '' ? null : Math.max(0, Number(event.target.value)))} placeholder="0" /><span>{unit || 'unidades'}</span></div>
+                <button type="button" className="step-button step-plus" aria-label="Aumentar quantidade" onClick={() => setQuantity((value) => Math.round(((value ?? 0) + 1) * 100) / 100)}>+</button>
+              </div>
+              <p className="quantity-rule">Quantidade ajustada: {selectedOrder.qtdAjustada || '—'}. Informe o total real executado; o consolidado considera o maior valor.</p>
               <label className="field-group textarea-group">
                 <span>Observação (opcional)</span>
                 <textarea value={observation} onChange={(event) => setObservation(event.target.value)} placeholder="Descreva o que foi executado." />
@@ -424,7 +485,7 @@ function FieldApp({
 
         <label className="search-field">
           <span aria-hidden="true">⌕</span>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar ordem, alimentador ou barramento" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === 'executadas' ? 'Buscar registro, ordem ou quem executou' : 'Buscar ordem, alimentador ou barramento'} />
           {query && <button type="button" aria-label="Limpar busca" onClick={() => setQuery('')}>×</button>}
         </label>
 
@@ -443,6 +504,7 @@ function FieldApp({
               ) : (
                 <div className="completed-summary">
                   <span>{order.qtdExecutada === undefined ? order.motivoImpedimento || 'Impedimento registrado' : 'Executado: ' + order.qtdExecutada + (quantityUnit(order.qtdAjustada) ? ' ' + quantityUnit(order.qtdAjustada) : '')}</span>
+                  <small>{order.qtdExecutada === undefined ? 'Registrado por: ' : 'Executado por: '}{order.registradoPor || '—'}</small>
                   <small>Protocolo: {order.protocolo || '—'}</small>
                 </div>
               )}
@@ -496,6 +558,7 @@ function AdminApp({
   onReset: () => void;
 }) {
   const [page, setPage] = useState<AdminPage>('painel');
+  const [navOpen, setNavOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [teamFilter, setTeamFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -517,7 +580,7 @@ function AdminApp({
 
   return (
     <div className="admin-shell">
-      <aside className="admin-sidebar">
+      <aside className={'admin-sidebar' + (navOpen ? ' open' : '')} id="admin-navigation" aria-label="Menu administrativo">
         <Brand small />
         <span className="sidebar-caption">Controle de ordens</span>
         <div className="sidebar-divider" />
@@ -531,7 +594,7 @@ function AdminApp({
             ['protocolos', 'Protocolos', '▤'],
             ['acessos', 'Acessos', '♙'],
           ] as [AdminPage, string, string][]).map(([id, label, icon]) => (
-            <button key={id} className={page === id ? 'admin-nav-item active' : 'admin-nav-item'} onClick={() => setPage(id)}>
+            <button key={id} className={page === id ? 'admin-nav-item active' : 'admin-nav-item'} onClick={() => { setPage(id); setNavOpen(false); }}>
               <span className="nav-icon" aria-hidden="true">{icon}</span>{label}
             </button>
           ))}
@@ -539,12 +602,15 @@ function AdminApp({
         <div className="sidebar-bottom">
           <span className="admin-label"><span className="online-dot" />Supervisor</span>
           <button className="sidebar-text-button" onClick={onReset}>Restaurar dados da demonstração</button>
-          <button className="sidebar-text-button" onClick={onLogout}>Voltar ao acesso</button>
+          <button className="sidebar-text-button logout-button" onClick={onLogout}>Sair da administração</button>
         </div>
       </aside>
 
+      {navOpen && <button type="button" className="sidebar-backdrop" aria-label="Fechar menu" onClick={() => setNavOpen(false)} />}
+
       <div className="admin-main">
         <header className="admin-topbar">
+          <button type="button" className="admin-menu-toggle" aria-label={navOpen ? 'Fechar menu administrativo' : 'Abrir menu administrativo'} aria-controls="admin-navigation" aria-expanded={navOpen} onClick={() => setNavOpen((open) => !open)}><span aria-hidden="true">☰</span></button>
           <div>
             <span className="eyebrow">Controle de execução</span>
             <h1>{pageLabels[page].title}</h1>
@@ -650,7 +716,7 @@ function Dashboard({
         </div>
         {contractorStats.length > 0 && (
           <div className="responsible-progress">
-            <div className="panel-heading compact-heading"><h3>Efetivação por responsável • terceirizadas</h3></div>
+            <div className="panel-heading compact-heading"><h3>Efetivação por responsável • Vencer e NPER</h3></div>
             <div className="progress-grid">{contractorStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}</div>
           </div>
         )}
@@ -702,7 +768,9 @@ function ControlPage({ orders }: { orders: Order[] }) {
   const quantityStats = [...serviceGroups.entries()].map(([label, groupOrders]) => {
     const planned = groupOrders.reduce((sum, order) => sum + parseQuantity(order.qtdAjustada), 0);
     const reported = groupOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
-    const considered = groupOrders.reduce((sum, order) => sum + Math.max(parseQuantity(order.qtdAjustada), order.qtdExecutada ?? 0), 0);
+    const considered = groupOrders.reduce((sum, order) => sum + (order.status === 'executada'
+      ? Math.max(parseQuantity(order.qtdAjustada), order.qtdExecutada ?? 0)
+      : 0), 0);
     return { label, planned, reported, considered };
   }).sort((a, b) => b.considered - a.considered).slice(0, 8);
   const maxQuantity = Math.max(1, ...quantityStats.map((item) => Math.max(item.planned, item.reported)));
@@ -753,7 +821,7 @@ function ControlPage({ orders }: { orders: Order[] }) {
               </div>
             ))}
           </div> : <p className="chart-empty">As quantidades aparecerão após importar a carteira.</p>}
-          <p className="table-note">A quantidade considerada em cada ordem segue o maior valor entre o ajustado na planilha e o informado pela equipe.</p>
+          <p className="table-note">A quantidade considerada soma apenas ordens executadas e usa, em cada uma, o maior valor entre QTD. AJUSTADA e QTD EXECUTADA.</p>
         </div>
 
         <div className="panel">
@@ -891,7 +959,7 @@ function ImportPage({
     try {
       const workbook = await readWorkbook(selectedFile);
       setFile(workbook);
-      setSheetName(workbook.sheetNames[0] || '');
+      setSheetName(chooseImportSheet(workbook.workbook, source));
     } catch {
       setError('Não consegui ler essa planilha. Selecione um arquivo .xlsx válido.');
       setFile(null);
@@ -957,7 +1025,7 @@ function ImportPage({
       }
     });
     setOrders(nextOrders);
-    const sourceLabel = source === 'controle' ? 'CONTROLE • Geral' : source === 'inspecao' ? 'INSPEÇÃO' : source === 'nper' ? 'NPER' : 'VENCER';
+    const sourceLabel = source === 'controle' ? 'CONTROLE • Geral' : source === 'inspecao' ? 'INSPETOR' : source === 'nper' ? 'NPER' : 'VENCER';
     const record: ImportRecord = {
       id: 'import-' + Date.now(),
       fileName: file.fileName,
@@ -979,7 +1047,7 @@ function ImportPage({
           <div className="panel-heading"><h2>1. Selecione a fonte e a equipe</h2><span className="step-chip">Somente supervisor</span></div>
           <label className="field-group admin-field"><span>Planilha de origem</span>
             <select value={source} onChange={(event) => setSource(event.target.value as typeof source)}>
-              <option value="controle">CONTROLE • carteira geral</option><option value="inspecao">INSPEÇÃO</option><option value="nper">NPER</option><option value="vencer">VENCER</option>
+              <option value="controle">CONTROLE • carteira geral</option><option value="inspecao">INSPETOR</option><option value="nper">NPER</option><option value="vencer">VENCER</option>
             </select>
           </label>
           <label className="field-group admin-field"><span>{source === 'controle' ? 'Equipe para linhas sem equipe' : 'Equipe que receberá esta carteira'}</span>
@@ -1014,7 +1082,7 @@ function ImportPage({
               </article>
             ))}
           </div>
-          <div className="mapping-note"><strong>Relacionamento das carteiras</strong><span>NPER e VENCER podem ser relacionados ao CONTROLE pela coluna ORDEM / NUM_CONSEQUENCIA. INSPEÇÃO usa OS como identificador próprio.</span></div>
+          <div className="mapping-note"><strong>Relacionamento das carteiras</strong><span>NPER e VENCER podem ser relacionados ao CONTROLE pela coluna ORDEM / NUM_CONSEQUENCIA. Inspetor usa OS como identificador próprio.</span></div>
         </section>
       </div>
 
@@ -1046,9 +1114,10 @@ function ProtocolsPage({ orders }: { orders: Order[] }) {
 
 function AccessPage({ profiles, setProfiles, teamChoices }: { profiles: AccessProfile[]; setProfiles: (profiles: AccessProfile[]) => void; teamChoices: string[] }) {
   const [showForm, setShowForm] = useState(false);
-  const [kind, setKind] = useState<ProfileKind>('inspecao');
+  const [kind, setKind] = useState<ProfileKind>('inspetor');
   const [team, setTeam] = useState(teamOptions[0]);
   const [responsible, setResponsible] = useState('');
+  const [operatorName, setOperatorName] = useState('');
   const [label, setLabel] = useState('');
   const [created, setCreated] = useState<AccessProfile | null>(null);
   const [error, setError] = useState('');
@@ -1056,24 +1125,31 @@ function AccessPage({ profiles, setProfiles, teamChoices }: { profiles: AccessPr
   function createAccess(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
-    if (kind === 'terceirizada' && !responsible.trim()) {
-      setError('Informe o responsável para limitar a carteira às ordens dele.');
+    if (!operatorName.trim()) {
+      setError('Informe o nome que ficará registrado nos protocolos.');
+      return;
+    }
+    const vendorKind = kind === 'vencer' || kind === 'nper';
+    if (vendorKind && !responsible.trim()) {
+      setError('Informe o responsável da planilha para limitar a carteira às ordens dele.');
       return;
     }
     const suffix = String(Math.floor(1000 + Math.random() * 9000));
-    const codePrefix = kind === 'inspecao' ? 'INSP' : kind === 'terceirizada' ? 'TERC' : 'PROPRIA';
+    const codePrefix = kind === 'inspetor' ? 'INSP' : kind === 'vencer' ? 'VENCER' : kind === 'nper' ? 'NPER' : 'NEO';
     const profile: AccessProfile = {
       id: 'profile-' + Date.now(),
       kind,
-      label: label.trim() || (team + (responsible ? ' • ' + responsible.trim() : '')),
+      label: label.trim() || (team + ' • ' + operatorName.trim()),
+      operatorName: operatorName.trim(),
       code: codePrefix + '-' + suffix,
       password: String(Math.floor(1000 + Math.random() * 9000)),
       team,
-      responsible: kind === 'terceirizada' ? responsible.trim() : undefined,
+      responsible: vendorKind ? responsible.trim() : undefined,
       active: true,
     };
     setProfiles([...profiles, profile]);
     setCreated(profile);
+    setOperatorName('');
     setLabel('');
     setResponsible('');
     setShowForm(false);
@@ -1087,23 +1163,24 @@ function AccessPage({ profiles, setProfiles, teamChoices }: { profiles: AccessPr
     <main className="admin-content">
       <section className="panel access-panel">
         <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Cada perfil libera somente a carteira vinculada.</p></div><button className="button button-primary" onClick={() => { setShowForm((value) => !value); setCreated(null); }}>+ Criar perfil</button></div>
-        <div className="security-note"><strong>Atribuição por acesso</strong><span>Para terceirizadas, crie um perfil individual por responsável. Assim, a pessoa entra com o próprio código e vê apenas as ordens com o mesmo RESPONSÁVEL.</span></div>
+        <div className="security-note"><strong>Atribuição por acesso</strong><span>O acesso guarda o nome auditado. Para Vencer, vincule também o responsável da planilha para limitar a carteira às ordens correspondentes.</span></div>
         {created && <div className="created-credentials"><div><strong>Acesso criado</strong><span>Guarde estes dados e repasse ao perfil correspondente.</span></div><code>{created.code} / {created.password}</code><button className="text-button" onClick={() => setCreated(null)}>Fechar</button></div>}
         {showForm && (
           <form className="access-form" onSubmit={createAccess}>
             <div className="form-heading"><h3>Novo perfil</h3><p>O supervisor administra os códigos; nenhum cadastro é feito pela equipe.</p></div>
             <div className="form-grid">
-              <label className="field-group"><span>Tipo de acesso</span><select value={kind} onChange={(event) => setKind(event.target.value as ProfileKind)}><option value="inspecao">Inspeção</option><option value="terceirizada">Terceirizada</option><option value="propria">Própria Neoenergia</option></select></label>
+              <label className="field-group"><span>Tipo de acesso</span><select value={kind} onChange={(event) => setKind(event.target.value as ProfileKind)}>{(['inspetor', 'vencer', 'nper', 'neoenergia'] as ProfileKind[]).map((option) => <option key={option} value={option}>{kindLabels[option]}</option>)}</select></label>
               <label className="field-group"><span>Equipe / carteira</span><input list="access-team-choices" value={team} onChange={(event) => setTeam(event.target.value)} placeholder="Digite ou selecione uma equipe" /><datalist id="access-team-choices">{teamChoices.map((option) => <option key={option} value={option} />)}</datalist></label>
-              {kind === 'terceirizada' && <label className="field-group"><span>Responsável da planilha</span><input value={responsible} onChange={(event) => setResponsible(event.target.value)} placeholder="Nome como aparece em RESPONSÁVEL" /></label>}
-              <label className="field-group"><span>Nome do perfil (opcional)</span><input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Ex.: Vencer LM • responsável" /></label>
+              <label className="field-group"><span>Nome de quem usará este acesso</span><input value={operatorName} onChange={(event) => setOperatorName(event.target.value)} placeholder="Ex.: João Silva" autoComplete="name" required /></label>
+              {(kind === 'vencer' || kind === 'nper') && <label className="field-group"><span>Responsável da planilha</span><input value={responsible} onChange={(event) => setResponsible(event.target.value)} placeholder="Nome como aparece em RESPONSÁVEL" /></label>}
+              <label className="field-group"><span>Identificação do perfil (opcional)</span><input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Ex.: Linha Viva • equipe 02" /></label>
             </div>
             {error && <div className="inline-error">{error}</div>}
             <div className="form-actions"><button type="button" className="button button-ghost" onClick={() => setShowForm(false)}>Cancelar</button><button className="button button-primary" type="submit">Criar código e senha</button></div>
           </form>
         )}
-        <div className="table-scroll"><table className="admin-table access-table"><thead><tr><th>Perfil</th><th>Tipo</th><th>Equipe</th><th>Responsável</th><th>Código</th><th>Estado</th><th>Ação</th></tr></thead>
-          <tbody>{profiles.map((profile) => <tr key={profile.id}><td><strong>{profile.label}</strong></td><td>{kindLabels[profile.kind]}</td><td>{profile.team}</td><td>{profile.responsible || '—'}</td><td><code>{profile.code}</code></td><td><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button></td></tr>)}</tbody>
+        <div className="table-scroll"><table className="admin-table access-table"><thead><tr><th>Perfil</th><th>Tipo</th><th>Equipe</th><th>Nome auditado</th><th>Responsável da planilha</th><th>Código</th><th>Estado</th><th>Ação</th></tr></thead>
+          <tbody>{profiles.map((profile) => <tr key={profile.id}><td><strong>{profile.label}</strong></td><td>{kindLabels[profile.kind]}</td><td>{profile.team}</td><td>{profile.operatorName || profile.responsible || profile.label}</td><td>{profile.responsible || '—'}</td><td><code>{profile.code}</code></td><td><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button></td></tr>)}</tbody>
         </table></div>
         <p className="local-warning">Demonstração local: códigos e senhas ficam neste navegador. A proteção real depende de autenticação e regras no banco.</p>
       </section>

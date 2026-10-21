@@ -1,5 +1,5 @@
 import { demoImports, demoOrders, demoProfiles } from './sample-data';
-import type { AccessProfile, ImportRecord, Order } from '../types';
+import type { AccessProfile, ImportRecord, Order, ProfileKind } from '../types';
 
 const ORDERS_KEY = 'neoenergia-demo-orders-v1';
 const PROFILES_KEY = 'neoenergia-demo-profiles-v1';
@@ -15,7 +15,11 @@ function readJson<T>(key: string, fallback: T): T {
 }
 
 export function loadOrders(): Order[] {
-  return readJson(ORDERS_KEY, demoOrders);
+  return readJson<Order[]>(ORDERS_KEY, demoOrders).map((order) => {
+    if (!order.id.startsWith('order-')) return order;
+    const team = order.equipe === 'Inspeção 01' ? 'Inspetor 01' : order.equipe === 'Própria 02' ? 'Neoenergia 02' : order.equipe;
+    return team === order.equipe ? order : { ...order, equipe: team };
+  });
 }
 
 export function saveOrders(orders: Order[]): void {
@@ -23,7 +27,21 @@ export function saveOrders(orders: Order[]): void {
 }
 
 export function loadProfiles(): AccessProfile[] {
-  return readJson(PROFILES_KEY, demoProfiles);
+  const profiles = readJson<AccessProfile[]>(PROFILES_KEY, demoProfiles);
+  return profiles.map((profile) => {
+    const storedKind = String((profile as AccessProfile & { kind: string }).kind);
+    const teamAndLabel = (profile.team + ' ' + profile.label).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const kind: ProfileKind = storedKind === 'inspecao' ? 'inspetor'
+      : storedKind === 'propria' ? 'neoenergia'
+        : storedKind === 'terceirizada' ? (teamAndLabel.includes('nper') ? 'nper' : 'vencer')
+          : (['inspetor', 'vencer', 'nper', 'neoenergia'].includes(storedKind) ? storedKind as ProfileKind : 'inspetor');
+    const isDemoProfile = profile.id.startsWith('profile-') && (profile.code === 'INSP-04' || profile.code === 'PROPRIA-02');
+    const team = profile.team === 'Inspeção 01' ? 'Inspetor 01' : profile.team === 'Própria 02' ? 'Neoenergia 02' : profile.team;
+    const label = profile.code === 'INSP-04' ? 'Inspetor 01 • João Silva'
+      : profile.code === 'PROPRIA-02' ? 'Neoenergia 02 • Carlos Menezes' : profile.label;
+    const operatorName = profile.operatorName || profile.responsible || (profile.code === 'INSP-04' ? 'João Silva' : profile.code === 'PROPRIA-02' ? 'Carlos Menezes' : profile.label);
+    return { ...profile, kind, team: isDemoProfile ? team : profile.team, label: isDemoProfile ? label : profile.label, operatorName };
+  });
 }
 
 export function saveProfiles(profiles: AccessProfile[]): void {

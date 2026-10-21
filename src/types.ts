@@ -1,4 +1,4 @@
-export type ProfileKind = 'inspecao' | 'terceirizada' | 'propria';
+export type ProfileKind = 'inspetor' | 'vencer' | 'nper' | 'neoenergia';
 export type OrderStatus = 'pendente' | 'executada' | 'impedimento';
 export type AdminPage = 'painel' | 'controle' | 'ordens' | 'importacao' | 'protocolos' | 'acessos';
 
@@ -6,6 +6,7 @@ export interface AccessProfile {
   id: string;
   kind: ProfileKind;
   label: string;
+  operatorName?: string;
   code: string;
   password: string;
   team: string;
