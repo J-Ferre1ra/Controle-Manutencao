@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { demoImports, demoOrders, demoProfiles, teamOptions } from './data/sample-data';
 import { loadImports, loadOrders, loadProfiles, resetDemoData, saveImports, saveOrders, saveProfiles } from './data/storage';
-import { exportOrdersByTeam, mapSpreadsheetRow, readWorkbook, rowsFromSheet } from './lib/excel';
+import { exportControlWorkbook, mapSpreadsheetRow, readWorkbook, rowsFromSheet } from './lib/excel';
 import type { ParsedWorkbook } from './lib/excel';
 import type { AccessProfile, AdminPage, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
 
@@ -14,6 +14,7 @@ const kindLabels: Record<ProfileKind, string> = {
 
 const pageLabels: Record<AdminPage, { title: string; subtitle: string }> = {
   painel: { title: 'Visão geral', subtitle: 'Ordens executadas, pendências e produtividade das equipes.' },
+  controle: { title: 'Controle', subtitle: 'Gráficos de execução por situação, equipe, serviço e responsável.' },
   ordens: { title: 'Ordens', subtitle: 'Consulte e exporte as ordens das carteiras importadas.' },
   importacao: { title: 'Importar planilhas', subtitle: 'Carregue as carteiras do mês e distribua as ordens.' },
   protocolos: { title: 'Protocolos', subtitle: 'Consulte os registros de execução e impedimento.' },
@@ -410,7 +411,7 @@ function FieldApp({
         <div className="field-header"><Brand /><span className="team-chip">{session.team}</span></div>
         <div className="field-identity">
           <div><span className="eyebrow">Acesso da equipe</span><strong>{session.operatorName}</strong></div>
-          <button className="text-button" onClick={onLogout}>Sair</button>
+          <button className="text-button logout-button" onClick={onLogout}>Sair</button>
         </div>
         {session.responsible && <div className="responsible-banner"><span>Responsável vinculado</span><strong>{session.responsible}</strong></div>}
         <h1>Ordens da equipe</h1>
@@ -510,7 +511,7 @@ function AdminApp({
   }), [orders, search, teamFilter, statusFilter, serviceFilter]);
 
   function exportCurrent() {
-    void exportOrdersByTeam(filteredOrders, 'ordens-execucao-neoenergia.xlsx');
+    void exportControlWorkbook(filteredOrders, 'controle-execucao-neoenergia.xlsx');
   }
   const availableTeams = [...new Set([...teamOptions, ...orders.map((order) => order.equipe), ...profiles.map((profile) => profile.team)].filter(Boolean))];
 
@@ -524,6 +525,7 @@ function AdminApp({
         <nav className="admin-nav" aria-label="Navegação administrativa">
           {([
             ['painel', 'Painel', '▦'],
+            ['controle', 'Controle', '◔'],
             ['ordens', 'Ordens', '≡'],
             ['importacao', 'Importar planilhas', '↑'],
             ['protocolos', 'Protocolos', '▤'],
@@ -555,6 +557,7 @@ function AdminApp({
         </header>
 
         {page === 'painel' && <Dashboard orders={orders} setSearch={setSearch} setTeamFilter={setTeamFilter} setStatusFilter={setStatusFilter} setServiceFilter={setServiceFilter} setPage={setPage} />}
+        {page === 'controle' && <ControlPage orders={orders} />}
         {page === 'ordens' && (
           <OrdersPage
             orders={filteredOrders}
@@ -651,6 +654,114 @@ function Dashboard({
             <div className="progress-grid">{contractorStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}</div>
           </div>
         )}
+      </section>
+    </main>
+  );
+}
+
+function ControlPage({ orders }: { orders: Order[] }) {
+  const executed = orders.filter((order) => order.status === 'executada').length;
+  const impediments = orders.filter((order) => order.status === 'impedimento').length;
+  const pending = orders.filter((order) => order.status === 'pendente').length;
+  const total = orders.length;
+  const executedPercent = total ? executed / total * 100 : 0;
+  const impedimentEnd = total ? (executed + impediments) / total * 100 : 0;
+  const donutBackground = total
+    ? `conic-gradient(#00a859 0 ${executedPercent}%, #e6a13b ${executedPercent}% ${impedimentEnd}%, #dce6e9 ${impedimentEnd}% 100%)`
+    : '#dce6e9';
+
+  const teams = [...new Set(orders.map((order) => order.equipe.trim() || 'Sem equipe'))];
+  const teamStats = teams.map((team) => {
+    const assigned = orders.filter((order) => (order.equipe.trim() || 'Sem equipe') === team);
+    const complete = assigned.filter((order) => order.status === 'executada').length;
+    return { label: team, complete, total: assigned.length, percent: assigned.length ? Math.round(complete / assigned.length * 100) : 0 };
+  }).sort((a, b) => b.total - a.total);
+
+  const responsibleGroups = new Map<string, { label: string; orders: Order[] }>();
+  orders.forEach((order) => {
+    const responsible = order.responsavel.trim();
+    if (!responsible) return;
+    const company = order.empresa.trim();
+    const key = company + '\u0000' + responsible;
+    const existing = responsibleGroups.get(key);
+    if (existing) existing.orders.push(order);
+    else responsibleGroups.set(key, { label: company ? company + ' • ' + responsible : responsible, orders: [order] });
+  });
+  const responsibleStats = [...responsibleGroups.values()].map(({ label, orders: groupOrders }) => {
+    const complete = groupOrders.filter((order) => order.status === 'executada').length;
+    return { label, complete, total: groupOrders.length, percent: groupOrders.length ? Math.round(complete / groupOrders.length * 100) : 0 };
+  }).sort((a, b) => b.total - a.total).slice(0, 10);
+
+  const serviceGroups = new Map<string, Order[]>();
+  orders.forEach((order) => {
+    const service = order.servico.trim() || 'Sem serviço';
+    const group = serviceGroups.get(service) ?? [];
+    group.push(order);
+    serviceGroups.set(service, group);
+  });
+  const quantityStats = [...serviceGroups.entries()].map(([label, groupOrders]) => {
+    const planned = groupOrders.reduce((sum, order) => sum + parseQuantity(order.qtdAjustada), 0);
+    const reported = groupOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
+    const considered = groupOrders.reduce((sum, order) => sum + Math.max(parseQuantity(order.qtdAjustada), order.qtdExecutada ?? 0), 0);
+    return { label, planned, reported, considered };
+  }).sort((a, b) => b.considered - a.considered).slice(0, 8);
+  const maxQuantity = Math.max(1, ...quantityStats.map((item) => Math.max(item.planned, item.reported)));
+  const quantityText = (value: number) => value.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+
+  return (
+    <main className="admin-content control-page">
+      <section className="control-metrics">
+        <div className="control-metric"><span>Ordens na carteira</span><strong>{total.toLocaleString('pt-BR')}</strong><small>base atual</small></div>
+        <div className="control-metric"><span>Executadas</span><strong className="metric-success">{executed.toLocaleString('pt-BR')}</strong><small>{Math.round(executedPercent)}% da carteira</small></div>
+        <div className="control-metric"><span>Impedimentos</span><strong className="metric-warning">{impediments.toLocaleString('pt-BR')}</strong><small>precisam de análise</small></div>
+        <div className="control-metric"><span>Pendentes</span><strong>{pending.toLocaleString('pt-BR')}</strong><small>aguardando execução</small></div>
+      </section>
+
+      <section className="control-chart-grid">
+        <div className="panel">
+          <div className="panel-heading"><div><h2>Situação das ordens</h2><p className="muted">Distribuição da carteira atual</p></div></div>
+          <div className="status-chart-layout">
+            <div className="status-donut" role="img" aria-label={`${executed} executadas, ${impediments} com impedimento e ${pending} pendentes`} style={{ background: donutBackground }}>
+              <div className="status-donut-center"><strong>{total ? Math.round(executedPercent) + '%' : '—'}</strong><span>executadas</span></div>
+            </div>
+            <div className="status-legend">
+              <div className="status-legend-item"><span><i className="status-dot dot-executed" />Executadas</span><strong>{executed}</strong></div>
+              <div className="status-legend-item"><span><i className="status-dot dot-impediment" />Impedimentos</span><strong>{impediments}</strong></div>
+              <div className="status-legend-item"><span><i className="status-dot dot-pending" />Pendentes</span><strong>{pending}</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-heading"><div><h2>Execução por equipe</h2><p className="muted">Ordens concluídas sobre o total destinado</p></div></div>
+          {teamStats.length
+            ? <div className="progress-grid control-progress-grid">{teamStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}</div>
+            : <p className="chart-empty">Importe uma carteira para visualizar as equipes.</p>}
+        </div>
+      </section>
+
+      <section className="control-chart-grid">
+        <div className="panel">
+          <div className="panel-heading"><div><h2>Quantidades por serviço</h2><p className="muted">Previsto e informado pela equipe</p></div></div>
+          <div className="quantity-chart-legend"><span><i className="status-dot dot-plan" />QTD. ajustada</span><span><i className="status-dot dot-reported" />QTD. executada</span></div>
+          {quantityStats.length ? <div className="quantity-chart-list">
+            {quantityStats.map((item) => (
+              <div className="quantity-chart-item" key={item.label}>
+                <div className="quantity-chart-meta"><strong title={item.label}>{item.label}</strong><span>Considerada: {quantityText(item.considered)}</span></div>
+                <div className="quantity-bar-row"><span>Planilha</span><div className="quantity-bar-track"><i className="quantity-bar-plan" style={{ width: item.planned / maxQuantity * 100 + '%' }} /></div><b>{quantityText(item.planned)}</b></div>
+                <div className="quantity-bar-row"><span>Equipe</span><div className="quantity-bar-track"><i className="quantity-bar-reported" style={{ width: item.reported / maxQuantity * 100 + '%' }} /></div><b>{quantityText(item.reported)}</b></div>
+              </div>
+            ))}
+          </div> : <p className="chart-empty">As quantidades aparecerão após importar a carteira.</p>}
+          <p className="table-note">A quantidade considerada em cada ordem segue o maior valor entre o ajustado na planilha e o informado pela equipe.</p>
+        </div>
+
+        <div className="panel">
+          <div className="panel-heading"><div><h2>Execução por responsável</h2><p className="muted">Ordens concluídas vinculadas a cada responsável</p></div></div>
+          {responsibleStats.length
+            ? <div className="progress-grid control-progress-grid">{responsibleStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}</div>
+            : <p className="chart-empty">Nenhum responsável foi identificado na carteira.</p>}
+        </div>
       </section>
     </main>
   );

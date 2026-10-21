@@ -194,3 +194,210 @@ export async function exportOrdersByTeam(orders: Order[], fileName = 'ordens-exe
   });
   XLSX.writeFile(workbook, fileName);
 }
+
+const controlColumns = [
+  'UTD',
+  'ALIMENTADOR',
+  'CHAVE_DIRECIONADORA',
+  'BARRAMENTO',
+  'QTD. AJUSTADA',
+  'NUM_CONSEQUENCIA',
+  'TIPO_DOCUMENTO',
+  'INF',
+  'STATUS',
+  'TIPO DE PRIORIZAÇÃO',
+  'MÊS PROGRAMADO',
+  'EMPRESA',
+  'EQUIPE',
+  'SERVIÇO',
+  'AVANÇO',
+  'EQM',
+  'RESPONSÁVEL',
+  'QTD EXECUTADA',
+  'QTD CONSIDERADA',
+  'SITUAÇÃO DA EXECUÇÃO',
+  'MOTIVO DO IMPEDIMENTO',
+  'OBSERVAÇÃO',
+  'REGISTRADO POR',
+  'DATA DO REGISTRO',
+  'PROTOCOLO',
+];
+
+function numericQuantity(value: string | number | undefined): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const cleaned = value.trim().replace(/[^\d,.-]/g, '');
+  if (!cleaned) return null;
+  const normalized = cleaned.includes(',') && cleaned.includes('.')
+    ? cleaned.replace(/\./g, '').replace(',', '.')
+    : cleaned.replace(',', '.');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formulaCell(sheet: XLSX.WorkSheet, address: string, formula: string, value: number, format?: string): void {
+  sheet[address] = { t: 'n', f: formula, v: value, ...(format ? { z: format } : {}) };
+}
+
+function formulaSheet(XLSX: typeof import('xlsx'), rows: unknown[][], widths: number[]): XLSX.WorkSheet {
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = widths.map((wch) => ({ wch }));
+  return sheet;
+}
+
+function setFilter(sheet: XLSX.WorkSheet, rowCount: number, columnCount: number): void {
+  sheet['!autofilter'] = { ref: `A1:${columnName(columnCount - 1)}${Math.max(rowCount, 1)}` };
+}
+
+/** Exports a consolidated workbook inspired by the supplied Controle workbook, without its monthly order data. */
+export async function exportControlWorkbook(orders: Order[], fileName = 'controle-execucao-neoenergia.xlsx'): Promise<void> {
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.utils.book_new();
+  const sourceColumns = [...new Set(orders.flatMap((order) => order.sourceColumns ?? []))];
+  const columns = [...controlColumns];
+  sourceColumns.forEach((header) => {
+    if (header && !columns.some((column) => normalizeHeader(column) === normalizeHeader(header))) columns.push(header);
+  });
+
+  const masterRows: unknown[][] = [columns];
+  orders.forEach((order) => {
+    const row = columns.map((header) => {
+      const key = normalizeHeader(header);
+      if (key === 'QTD AJUSTADA') return numericQuantity(order.qtdAjustada) ?? order.qtdAjustada;
+      if (key === 'QTD EXECUTADA') return order.qtdExecutada ?? '';
+      if (key === 'QTD CONSIDERADA') return '';
+      if (key === 'EQUIPE') return order.equipe || 'Sem equipe';
+      if (key === 'SITUACAO DA EXECUCAO') return statusLabel(order.status);
+      if (key === 'MOTIVO DO IMPEDIMENTO') return order.motivoImpedimento ?? '';
+      if (key === 'OBSERVACAO') return order.observacao ?? '';
+      if (key === 'REGISTRADO POR') return order.registradoPor ?? '';
+      if (key === 'DATA DO REGISTRO') return order.dataRegistro ? new Date(order.dataRegistro).toLocaleString('pt-BR') : '';
+      if (key === 'PROTOCOLO') return order.protocolo ?? '';
+      return valueForHeader(header, order);
+    });
+    masterRows.push(row);
+  });
+
+  const master = XLSX.utils.aoa_to_sheet(masterRows);
+  const quantityIndex = columns.findIndex((header) => normalizeHeader(header) === 'QTD CONSIDERADA');
+  const adjustedIndex = columns.findIndex((header) => normalizeHeader(header) === 'QTD AJUSTADA');
+  const executedIndex = columns.findIndex((header) => normalizeHeader(header) === 'QTD EXECUTADA');
+  orders.forEach((order, index) => {
+    const rowNumber = index + 2;
+    const adjusted = numericQuantity(order.qtdAjustada) ?? 0;
+    const executed = order.qtdExecutada ?? 0;
+    const formula = `MAX(IFERROR(VALUE(${columnName(adjustedIndex)}${rowNumber}),0),IFERROR(VALUE(${columnName(executedIndex)}${rowNumber}),0))`;
+    formulaCell(master, `${columnName(quantityIndex)}${rowNumber}`, formula, Math.max(adjusted, executed), '0.##');
+  });
+  master['!cols'] = columns.map((header) => {
+    const key = normalizeHeader(header);
+    if (key.includes('OBSERVACAO') || key.includes('MOTIVO')) return { wch: 38 };
+    if (key === 'SERVICO' || key === 'TIPO DE PRIORIZACAO') return { wch: 30 };
+    if (key === 'PROTOCOLO') return { wch: 25 };
+    if (key.includes('DATA')) return { wch: 22 };
+    if (key.includes('RESPONSAVEL') || key === 'EMPRESA' || key === 'EQUIPE') return { wch: 22 };
+    return { wch: 17 };
+  });
+  setFilter(master, masterRows.length, columns.length);
+  XLSX.utils.book_append_sheet(workbook, master, 'ACOMPANHAMENTO');
+
+  const lastRow = Math.max(orders.length + 1, 2);
+  const range = (column: number) => `ACOMPANHAMENTO!$${columnName(column)}$2:$${columnName(column)}$${lastRow}`;
+  const statusColumn = columns.findIndex((header) => normalizeHeader(header) === 'SITUACAO DA EXECUCAO');
+  const adjustedRange = range(adjustedIndex);
+  const executedRange = range(executedIndex);
+  const consideredRange = range(quantityIndex);
+  const statusRange = range(statusColumn);
+  const total = orders.length;
+  const completed = orders.filter((order) => order.status === 'executada').length;
+  const blocked = orders.filter((order) => order.status === 'impedimento').length;
+  const pending = orders.filter((order) => order.status === 'pendente').length;
+  const plannedQuantity = orders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
+  const reportedQuantity = orders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
+  const consideredQuantity = orders.reduce((sum, order) => sum + Math.max(numericQuantity(order.qtdAjustada) ?? 0, order.qtdExecutada ?? 0), 0);
+  const presentationRows: unknown[][] = [
+    ['APRESENTAÇÃO • CONTROLE DA EXECUÇÃO'],
+    ['Indicador', 'Resultado'],
+    ['Ordens na carteira', ''],
+    ['Executadas', ''],
+    ['Impedimentos', ''],
+    ['Pendentes', ''],
+    ['Percentual executado', ''],
+    ['Quantidade ajustada', ''],
+    ['Quantidade informada pelas equipes', ''],
+    ['Quantidade considerada', ''],
+    [],
+    ['A quantidade considerada por ordem é o maior valor entre a quantidade ajustada e a quantidade executada informada pela equipe.'],
+  ];
+  const presentation = formulaSheet(XLSX, presentationRows, [42, 20]);
+  formulaCell(presentation, 'B3', `COUNTIF(${statusRange},"<>")`, total);
+  formulaCell(presentation, 'B4', `COUNTIF(${statusRange},"Executada")`, completed);
+  formulaCell(presentation, 'B5', `COUNTIF(${statusRange},"Impedimento")`, blocked);
+  formulaCell(presentation, 'B6', `COUNTIF(${statusRange},"Pendente")`, pending);
+  formulaCell(presentation, 'B7', 'IF(B3=0,0,B4/B3)', total ? completed / total : 0, '0%');
+  formulaCell(presentation, 'B8', `SUM(${adjustedRange})`, plannedQuantity, '0.##');
+  formulaCell(presentation, 'B9', `SUM(${executedRange})`, reportedQuantity, '0.##');
+  formulaCell(presentation, 'B10', `SUM(${consideredRange})`, consideredQuantity, '0.##');
+  XLSX.utils.book_append_sheet(workbook, presentation, 'APRESENTAÇÃO');
+
+  const teamColumn = columns.findIndex((header) => normalizeHeader(header) === 'EQUIPE');
+  const teams = [...new Set(orders.map((order) => order.equipe || 'Sem equipe'))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const teamRows: unknown[][] = [['EQUIPE', 'ORDENS', 'EXECUTADAS', 'IMPEDIMENTOS', 'PENDENTES', '% EXECUÇÃO', 'QTD. AJUSTADA', 'QTD EXECUTADA', 'QTD CONSIDERADA']];
+  teams.forEach((team) => teamRows.push([team, '', '', '', '', '', '', '', '']));
+  const byTeam = formulaSheet(XLSX, teamRows, [27, 13, 14, 16, 13, 15, 17, 17, 19]);
+  teams.forEach((team, index) => {
+    const rowNumber = index + 2;
+    const teamCriteria = `$A${rowNumber}`;
+    const teamRange = range(teamColumn);
+    const teamOrders = orders.filter((order) => (order.equipe || 'Sem equipe') === team);
+    const countStatus = (status: OrderStatus) => teamOrders.filter((order) => order.status === status).length;
+    const teamPlanned = teamOrders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
+    const teamReported = teamOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
+    const teamConsidered = teamOrders.reduce((sum, order) => sum + Math.max(numericQuantity(order.qtdAjustada) ?? 0, order.qtdExecutada ?? 0), 0);
+    formulaCell(byTeam, `B${rowNumber}`, `COUNTIF(${teamRange},${teamCriteria})`, teamOrders.length);
+    formulaCell(byTeam, `C${rowNumber}`, `COUNTIFS(${teamRange},${teamCriteria},${statusRange},"Executada")`, countStatus('executada'));
+    formulaCell(byTeam, `D${rowNumber}`, `COUNTIFS(${teamRange},${teamCriteria},${statusRange},"Impedimento")`, countStatus('impedimento'));
+    formulaCell(byTeam, `E${rowNumber}`, `COUNTIFS(${teamRange},${teamCriteria},${statusRange},"Pendente")`, countStatus('pendente'));
+    formulaCell(byTeam, `F${rowNumber}`, `IF(B${rowNumber}=0,0,C${rowNumber}/B${rowNumber})`, teamOrders.length ? countStatus('executada') / teamOrders.length : 0, '0%');
+    formulaCell(byTeam, `G${rowNumber}`, `SUMIF(${teamRange},${teamCriteria},${adjustedRange})`, teamPlanned, '0.##');
+    formulaCell(byTeam, `H${rowNumber}`, `SUMIF(${teamRange},${teamCriteria},${executedRange})`, teamReported, '0.##');
+    formulaCell(byTeam, `I${rowNumber}`, `SUMIF(${teamRange},${teamCriteria},${consideredRange})`, teamConsidered, '0.##');
+  });
+  setFilter(byTeam, teamRows.length, teamRows[0].length);
+  XLSX.utils.book_append_sheet(workbook, byTeam, 'POR EQUIPE');
+
+  const responsibleGroups = [...new Map(orders
+    .filter((order) => order.responsavel.trim())
+    .map((order) => [`${order.empresa}\u0000${order.responsavel}`, { company: order.empresa || 'Sem empresa', responsible: order.responsavel }])).values()]
+    .sort((a, b) => `${a.company} ${a.responsible}`.localeCompare(`${b.company} ${b.responsible}`, 'pt-BR'));
+  const responsibleRows: unknown[][] = [['EMPRESA', 'RESPONSÁVEL', 'ORDENS', 'EXECUTADAS', 'IMPEDIMENTOS', 'PENDENTES', '% EXECUÇÃO', 'QTD. AJUSTADA', 'QTD EXECUTADA', 'QTD CONSIDERADA']];
+  responsibleGroups.forEach(({ company, responsible }) => responsibleRows.push([company, responsible, '', '', '', '', '', '', '', '']));
+  const byResponsible = formulaSheet(XLSX, responsibleRows, [25, 28, 13, 14, 16, 13, 15, 17, 17, 19]);
+  const companyColumn = columns.findIndex((header) => normalizeHeader(header) === 'EMPRESA');
+  const responsibleColumn = columns.findIndex((header) => normalizeHeader(header) === 'RESPONSAVEL');
+  responsibleGroups.forEach(({ company, responsible }, index) => {
+    const rowNumber = index + 2;
+    const groupRange = (column: number) => `ACOMPANHAMENTO!$${columnName(column)}$2:$${columnName(column)}$${lastRow}`;
+    const companyRange = groupRange(companyColumn);
+    const responsibleRange = groupRange(responsibleColumn);
+    const companyCriteria = `$A${rowNumber}`;
+    const responsibleCriteria = `$B${rowNumber}`;
+    const groupOrders = orders.filter((order) => (order.empresa || 'Sem empresa') === company && order.responsavel === responsible);
+    const countStatus = (status: OrderStatus) => groupOrders.filter((order) => order.status === status).length;
+    const groupPlanned = groupOrders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
+    const groupReported = groupOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
+    const groupConsidered = groupOrders.reduce((sum, order) => sum + Math.max(numericQuantity(order.qtdAjustada) ?? 0, order.qtdExecutada ?? 0), 0);
+    formulaCell(byResponsible, `C${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria})`, groupOrders.length);
+    formulaCell(byResponsible, `D${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria},${statusRange},"Executada")`, countStatus('executada'));
+    formulaCell(byResponsible, `E${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria},${statusRange},"Impedimento")`, countStatus('impedimento'));
+    formulaCell(byResponsible, `F${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria},${statusRange},"Pendente")`, countStatus('pendente'));
+    formulaCell(byResponsible, `G${rowNumber}`, `IF(C${rowNumber}=0,0,D${rowNumber}/C${rowNumber})`, groupOrders.length ? countStatus('executada') / groupOrders.length : 0, '0%');
+    formulaCell(byResponsible, `H${rowNumber}`, `SUMIFS(${adjustedRange},${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria})`, groupPlanned, '0.##');
+    formulaCell(byResponsible, `I${rowNumber}`, `SUMIFS(${executedRange},${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria})`, groupReported, '0.##');
+    formulaCell(byResponsible, `J${rowNumber}`, `SUMIFS(${consideredRange},${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria})`, groupConsidered, '0.##');
+  });
+  setFilter(byResponsible, responsibleRows.length, responsibleRows[0].length);
+  XLSX.utils.book_append_sheet(workbook, byResponsible, 'POR RESPONSÁVEL');
+
+  XLSX.writeFile(workbook, fileName);
+}

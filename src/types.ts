@@ -1,6 +1,6 @@
 export type ProfileKind = 'inspecao' | 'terceirizada' | 'propria';
 export type OrderStatus = 'pendente' | 'executada' | 'impedimento';
-export type AdminPage = 'painel' | 'ordens' | 'importacao' | 'protocolos' | 'acessos';
+export type AdminPage = 'painel' | 'controle' | 'ordens' | 'importacao' | 'protocolos' | 'acessos';
 
 export interface AccessProfile {
   id: string;

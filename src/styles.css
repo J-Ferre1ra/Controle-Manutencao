@@ -52,6 +52,8 @@ h1, h2, h3, p { margin-top: 0; }
 .button-full { width: 100%; min-height: 48px; }
 .text-button { padding: 4px 0; border: 0; color: var(--blue); background: transparent; font-size: 13px; font-weight: 700; }
 .text-button:hover { color: var(--navy); text-decoration: underline; }
+.logout-button { min-height: 34px; padding: 5px 12px; border: 1px solid #bfd3d9; border-radius: 7px; color: var(--navy); background: #fff; }
+.logout-button:hover { border-color: #83b5c3; background: #f4fafc; text-decoration: none; }
 
 .login-page { display: grid; min-height: 100vh; place-items: center; padding: 34px 18px 54px; background: radial-gradient(ellipse at 50% -28%, #d7edf3 0, transparent 60%), var(--page); }
 .login-card { width: min(100%, 440px); padding: 32px; border: 1px solid rgba(210, 225, 231, .9); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
@@ -224,6 +226,45 @@ h1, h2, h3, p { margin-top: 0; }
 .progress-track { height: 7px; overflow: hidden; border-radius: 20px; background: #e9eff1; }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #00a859, #3ec77d); }
 .progress-item small { color: #748890; font-size: 10px; }
+.control-page { gap: 16px; }
+.control-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; }
+.control-metric { display: grid; min-height: 105px; align-content: center; gap: 6px; padding: 15px 17px; border: 1px solid #e0e9ec; border-radius: 9px; background: #fff; }
+.control-metric > span { color: #607681; font-size: 11px; }
+.control-metric > strong { color: var(--navy); font-size: 25px; line-height: 1; }
+.control-metric > strong.metric-success { color: var(--success); }
+.control-metric > strong.metric-warning { color: var(--warning); }
+.control-metric > small { color: #86979e; font-size: 10px; }
+.control-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.control-chart-grid > .panel { min-width: 0; }
+.status-chart-layout { display: flex; min-height: 174px; align-items: center; justify-content: center; gap: clamp(18px, 4vw, 42px); }
+.status-donut { display: grid; width: 154px; height: 154px; flex: 0 0 auto; place-items: center; border-radius: 50%; }
+.status-donut-center { display: grid; width: 104px; height: 104px; align-content: center; justify-items: center; border-radius: 50%; background: #fff; }
+.status-donut-center strong { color: var(--navy); font-size: 25px; }
+.status-donut-center span { color: #768b94; font-size: 10px; }
+.status-legend { display: grid; width: min(100%, 200px); gap: 12px; }
+.status-legend-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #657b84; font-size: 11px; }
+.status-legend-item > span, .quantity-chart-legend > span { display: inline-flex; align-items: center; gap: 7px; }
+.status-legend-item strong { color: #345460; font-size: 12px; }
+.status-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+.dot-executed { background: #00a859; }
+.dot-impediment { background: #e6a13b; }
+.dot-pending { background: #dce6e9; }
+.dot-plan { background: #0879a9; }
+.dot-reported { background: #00a859; }
+.control-progress-grid { grid-template-columns: 1fr; gap: 15px; }
+.quantity-chart-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: -3px 0 14px; color: #71848d; font-size: 10px; }
+.quantity-chart-list { display: grid; gap: 15px; }
+.quantity-chart-item { display: grid; gap: 6px; }
+.quantity-chart-meta { display: flex; justify-content: space-between; gap: 12px; color: #789099; font-size: 10px; }
+.quantity-chart-meta strong { overflow: hidden; color: #365460; text-overflow: ellipsis; white-space: nowrap; }
+.quantity-chart-meta span { flex: 0 0 auto; }
+.quantity-bar-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) 45px; align-items: center; gap: 8px; color: #778b94; font-size: 9px; }
+.quantity-bar-row b { color: #45616d; font-size: 10px; font-weight: 600; text-align: right; }
+.quantity-bar-track { height: 8px; overflow: hidden; border-radius: 9px; background: #edf2f3; }
+.quantity-bar-track i { display: block; height: 100%; min-width: 0; border-radius: inherit; }
+.quantity-bar-plan { background: #0879a9; }
+.quantity-bar-reported { background: #00a859; }
+.chart-empty { display: grid; min-height: 125px; place-items: center; margin: 0; color: #81939a; font-size: 12px; text-align: center; }
 .responsible-progress { margin-top: 22px; padding-top: 18px; border-top: 1px solid #e9eff1; }
 .compact-heading { margin-bottom: 13px; }
 .orders-panel .panel-heading { align-items: flex-start; }
@@ -291,6 +332,8 @@ h1, h2, h3, p { margin-top: 0; }
   .admin-main { margin-left: 210px; }
   .admin-content { padding-right: 24px; padding-left: 24px; }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .control-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .control-chart-grid { grid-template-columns: 1fr; }
   .import-layout { grid-template-columns: 1fr; }
   .import-history-list { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
 }
@@ -347,6 +390,11 @@ h1, h2, h3, p { margin-top: 0; }
   .export-button { min-height: 35px; padding: 0 10px; font-size: 10px; white-space: nowrap; }
   .topbar-actions { align-self: center; }
   .stats-grid { gap: 8px; }
+  .control-metrics { gap: 8px; }
+  .control-metric { min-height: 91px; padding: 11px; }
+  .control-metric > span { font-size: 10px; }
+  .control-metric > strong { font-size: 22px; }
+  .control-metric > small { font-size: 9px; }
   .stat-card { min-height: 91px; padding: 11px; }
   .stat-card > span { font-size: 10px; }
   .stat-card > strong { font-size: 22px; }
@@ -363,6 +411,12 @@ h1, h2, h3, p { margin-top: 0; }
   .admin-search input { height: 36px; font-size: 11px; }
   .progress-grid { grid-template-columns: 1fr; }
   .progress-label strong { max-width: 65%; }
+  .status-chart-layout { min-height: 142px; gap: 18px; }
+  .status-donut { width: 128px; height: 128px; }
+  .status-donut-center { width: 86px; height: 86px; }
+  .status-donut-center strong { font-size: 21px; }
+  .status-legend { gap: 9px; }
+  .quantity-chart-meta { align-items: flex-start; flex-direction: column; gap: 3px; }
   .import-layout { gap: 12px; }
   .upload-dropzone { min-height: 82px; padding: 10px; }
   .upload-dropzone > span:nth-child(2) { gap: 4px; }
