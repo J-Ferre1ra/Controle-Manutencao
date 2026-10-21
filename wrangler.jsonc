@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "controle-ordens-neoenergia",
+  "name": "controle-manutencao-neoenergia",
   "main": "worker/index.js",
   "compatibility_date": "2026-10-21",
   "workers_dev": true,
