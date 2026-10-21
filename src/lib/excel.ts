@@ -290,11 +290,10 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
   const statusColumnIndex = columns.findIndex((header) => normalizeHeader(header) === 'SITUACAO DA EXECUCAO');
   orders.forEach((order, index) => {
     const rowNumber = index + 2;
-    const adjusted = numericQuantity(order.qtdAjustada) ?? 0;
     const executed = order.qtdExecutada ?? 0;
     const statusCell = `${columnName(statusColumnIndex)}${rowNumber}`;
-    const formula = `IF(${statusCell}="Executada",MAX(IFERROR(VALUE(${columnName(adjustedIndex)}${rowNumber}),0),IFERROR(VALUE(${columnName(executedIndex)}${rowNumber}),0)),0)`;
-    formulaCell(master, `${columnName(quantityIndex)}${rowNumber}`, formula, order.status === 'executada' ? Math.max(adjusted, executed) : 0, '0.##');
+    const formula = `IF(${statusCell}="Executada",IFERROR(VALUE(${columnName(executedIndex)}${rowNumber}),0),0)`;
+    formulaCell(master, `${columnName(quantityIndex)}${rowNumber}`, formula, order.status === 'executada' ? executed : 0, '0.##');
   });
   master['!cols'] = columns.map((header) => {
     const key = normalizeHeader(header);
@@ -321,9 +320,7 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
   const pending = orders.filter((order) => order.status === 'pendente').length;
   const plannedQuantity = orders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
   const reportedQuantity = orders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
-  const consideredQuantity = orders.reduce((sum, order) => sum + (order.status === 'executada'
-    ? Math.max(numericQuantity(order.qtdAjustada) ?? 0, order.qtdExecutada ?? 0)
-    : 0), 0);
+  const consideredQuantity = orders.reduce((sum, order) => sum + (order.status === 'executada' ? order.qtdExecutada ?? 0 : 0), 0);
   const presentationRows: unknown[][] = [
     ['APRESENTAÇÃO • CONTROLE DA EXECUÇÃO'],
     ['Indicador', 'Resultado'],
@@ -336,7 +333,7 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
     ['Quantidade informada pelas equipes', ''],
     ['Quantidade considerada', ''],
     [],
-    ['A quantidade considerada soma apenas ordens executadas; em cada uma, usa o maior valor entre QTD. AJUSTADA e QTD EXECUTADA.'],
+    ['A quantidade considerada soma a QTD EXECUTADA informada pela equipe nas ordens executadas. Quando ficar abaixo da QTD. AJUSTADA, a observação deve justificar a diferença.'],
   ];
   const presentation = formulaSheet(XLSX, presentationRows, [42, 20]);
   formulaCell(presentation, 'B3', `COUNTIF(${statusRange},"<>")`, total);
@@ -362,9 +359,7 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
     const countStatus = (status: OrderStatus) => teamOrders.filter((order) => order.status === status).length;
     const teamPlanned = teamOrders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
     const teamReported = teamOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
-    const teamConsidered = teamOrders.reduce((sum, order) => sum + (order.status === 'executada'
-      ? Math.max(numericQuantity(order.qtdAjustada) ?? 0, order.qtdExecutada ?? 0)
-      : 0), 0);
+    const teamConsidered = teamOrders.reduce((sum, order) => sum + (order.status === 'executada' ? order.qtdExecutada ?? 0 : 0), 0);
     formulaCell(byTeam, `B${rowNumber}`, `COUNTIF(${teamRange},${teamCriteria})`, teamOrders.length);
     formulaCell(byTeam, `C${rowNumber}`, `COUNTIFS(${teamRange},${teamCriteria},${statusRange},"Executada")`, countStatus('executada'));
     formulaCell(byTeam, `D${rowNumber}`, `COUNTIFS(${teamRange},${teamCriteria},${statusRange},"Impedimento")`, countStatus('impedimento'));
@@ -397,9 +392,7 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
     const countStatus = (status: OrderStatus) => groupOrders.filter((order) => order.status === status).length;
     const groupPlanned = groupOrders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
     const groupReported = groupOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
-    const groupConsidered = groupOrders.reduce((sum, order) => sum + (order.status === 'executada'
-      ? Math.max(numericQuantity(order.qtdAjustada) ?? 0, order.qtdExecutada ?? 0)
-      : 0), 0);
+    const groupConsidered = groupOrders.reduce((sum, order) => sum + (order.status === 'executada' ? order.qtdExecutada ?? 0 : 0), 0);
     formulaCell(byResponsible, `C${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria})`, groupOrders.length);
     formulaCell(byResponsible, `D${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria},${statusRange},"Executada")`, countStatus('executada'));
     formulaCell(byResponsible, `E${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria},${statusRange},"Impedimento")`, countStatus('impedimento'));

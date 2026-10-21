@@ -355,6 +355,10 @@ function FieldApp({
       setError('A quantidade realizada não pode ser negativa.');
       return;
     }
+    if (executionMode === 'executada' && quantity !== null && quantity < parseQuantity(selectedOrder.qtdAjustada) && !observation.trim()) {
+      setError('Explique na observação por que a quantidade executada ficou abaixo da ajustada.');
+      return;
+    }
     const updated: Order = {
       ...selectedOrder,
       status: executionMode,
@@ -424,9 +428,9 @@ function FieldApp({
                 <div className="quantity-value"><input id="quantity-completed" className="quantity-number-input" type="number" min="0" step="0.01" value={quantity ?? ''} onChange={(event) => setQuantity(event.target.value === '' ? null : Math.max(0, Number(event.target.value)))} placeholder="0" /><span>{unit || 'unidades'}</span></div>
                 <button type="button" className="step-button step-plus" aria-label="Aumentar quantidade" onClick={() => setQuantity((value) => Math.round(((value ?? 0) + 1) * 100) / 100)}>+</button>
               </div>
-              <p className="quantity-rule">Quantidade ajustada: {selectedOrder.qtdAjustada || '—'}. Informe o total real executado; o consolidado considera o maior valor.</p>
+              <p className="quantity-rule">Quantidade ajustada: {selectedOrder.qtdAjustada || '—'}. Informe o total real; se for menor, explique o motivo na observação.</p>
               <label className="field-group textarea-group">
-                <span>Observação (opcional)</span>
+                <span>Observação {quantity !== null && quantity < parseQuantity(selectedOrder.qtdAjustada) ? '(obrigatória)' : '(opcional)'}</span>
                 <textarea value={observation} onChange={(event) => setObservation(event.target.value)} placeholder="Descreva o que foi executado." />
               </label>
             </>
@@ -768,9 +772,7 @@ function ControlPage({ orders }: { orders: Order[] }) {
   const quantityStats = [...serviceGroups.entries()].map(([label, groupOrders]) => {
     const planned = groupOrders.reduce((sum, order) => sum + parseQuantity(order.qtdAjustada), 0);
     const reported = groupOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
-    const considered = groupOrders.reduce((sum, order) => sum + (order.status === 'executada'
-      ? Math.max(parseQuantity(order.qtdAjustada), order.qtdExecutada ?? 0)
-      : 0), 0);
+    const considered = groupOrders.reduce((sum, order) => sum + (order.status === 'executada' ? order.qtdExecutada ?? 0 : 0), 0);
     return { label, planned, reported, considered };
   }).sort((a, b) => b.considered - a.considered).slice(0, 8);
   const maxQuantity = Math.max(1, ...quantityStats.map((item) => Math.max(item.planned, item.reported)));
@@ -821,7 +823,7 @@ function ControlPage({ orders }: { orders: Order[] }) {
               </div>
             ))}
           </div> : <p className="chart-empty">As quantidades aparecerão após importar a carteira.</p>}
-          <p className="table-note">A quantidade considerada soma apenas ordens executadas e usa, em cada uma, o maior valor entre QTD. AJUSTADA e QTD EXECUTADA.</p>
+          <p className="table-note">A quantidade considerada corresponde à QTD EXECUTADA informada pela equipe. Se ficar abaixo da quantidade ajustada, a observação da ordem deve explicar o motivo.</p>
         </div>
 
         <div className="panel">
