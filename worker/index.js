@@ -199,7 +199,7 @@ async function login(request, env) {
   const code = String(body.code || '').trim();
   const password = String(body.password || '');
   const remoteIp = request.headers.get('CF-Connecting-IP') || 'unknown';
-  const attemptKey = await sha256(`${remoteIp}:${kind}:${normalize(code)}`);
+  const attemptKey = await sha256(`${remoteIp}:${kind === 'admin' ? 'admin' : 'team'}:${normalize(code)}`);
   const attempt = await env.DB.prepare('SELECT locked_until FROM login_attempts WHERE attempt_key = ?1').bind(attemptKey).first();
   if (attempt?.locked_until > Date.now()) return json({ error: 'Muitas tentativas. Aguarde 15 minutos e tente novamente.' }, 429);
 
@@ -217,15 +217,15 @@ async function login(request, env) {
   }
 
   const profileRow = await env.DB.prepare(
-    'SELECT id, kind, password_salt, password_hash, profile_json FROM access_profiles WHERE code = ?1 COLLATE NOCASE AND kind = ?2 AND active = 1',
-  ).bind(code, kind).first();
+    'SELECT id, kind, password_salt, password_hash, profile_json FROM access_profiles WHERE code = ?1 COLLATE NOCASE AND active = 1',
+  ).bind(code).first();
   let profile = profileRow && publicProfile(profileRow.profile_json);
   const valid = profileRow && profile && await equalSecret(
     await hashPassword(password, profileRow.password_salt), profileRow.password_hash,
   );
   if (!valid) {
     await recordFailedLogin(env, attemptKey);
-    return json({ error: 'Código, senha ou perfil inválido. Confira os dados ou peça ajuda ao supervisor.' }, 401);
+    return json({ error: 'Não foi possível entrar. Confira o código e a senha; se continuar, peça ao supervisor para confirmar que o acesso está salvo e ativo.' }, 401);
   }
   await clearFailedLogin(env, attemptKey);
   const cookie = await createSession(request, env, profileRow.id, false);

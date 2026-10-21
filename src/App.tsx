@@ -33,6 +33,7 @@ function parseQuantity(value: string): number {
 }
 
 type ImportSource = 'controle' | 'inspecao' | 'nper' | 'vencer';
+type AdminSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 function chooseImportSheet(workbook: ParsedWorkbook['workbook'], source: ImportSource): string {
   const preferredNames: Record<ImportSource, string[]> = {
@@ -98,6 +99,7 @@ export default function App() {
   const [supervisorLoginOpen, setSupervisorLoginOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [connectionError, setConnectionError] = useState('');
+  const [adminSaveStatus, setAdminSaveStatus] = useState<AdminSaveStatus>('idle');
   const [saveRevision, setSaveRevision] = useState(0);
   const dirtyRevision = useRef(0);
   const adminDirty = useRef(false);
@@ -129,7 +131,7 @@ export default function App() {
     return () => { active = false; };
   }, []);
 
-  async function login(kind: ProfileKind | 'admin', code: string, password: string) {
+  async function login(kind: ProfileKind | 'admin' | '', code: string, password: string) {
     const response = await apiRequest<{ session: { isAdmin: boolean; kind: string; label: string; team: string; responsible?: string; operatorName: string }; state: { orders: Order[]; profiles: AccessProfile[]; imports: ImportRecord[] } }>('/api/login', {
       method: 'POST',
       body: JSON.stringify({ kind, code, password }),
@@ -155,6 +157,7 @@ export default function App() {
   function markAdminStateDirty() {
     if (!adminMode) return;
     adminDirty.current = true;
+    setAdminSaveStatus('saving');
     dirtyRevision.current += 1;
     setSaveRevision(dirtyRevision.current);
   }
@@ -171,9 +174,12 @@ export default function App() {
         method: 'POST',
         body: JSON.stringify({ orders, profiles, imports }),
       }).then(() => {
-        if (dirtyRevision.current === revision) adminDirty.current = false;
-      }).catch((error: unknown) => {
-        setConnectionError(error instanceof Error ? error.message : 'Não foi possível salvar as alterações.');
+        if (dirtyRevision.current === revision) {
+          adminDirty.current = false;
+          setAdminSaveStatus('saved');
+        }
+      }).catch(() => {
+        if (dirtyRevision.current === revision) setAdminSaveStatus('error');
       });
     }, 500);
     return () => window.clearTimeout(timer);
@@ -236,6 +242,8 @@ export default function App() {
         setProfiles={updateProfiles}
         imports={imports}
         setImports={updateImports}
+        saveStatus={adminSaveStatus}
+        onRetrySave={markAdminStateDirty}
         onLogout={() => { void logout(); }}
       />
     );
@@ -249,27 +257,31 @@ export default function App() {
     return <SupervisorLogin onBack={() => setSupervisorLoginOpen(false)} onLogin={(code, password) => login('admin', code, password)} />;
   }
 
-  return <LoginScreen onLogin={(kind, code, password) => login(kind, code, password)} onOpenAdmin={() => setSupervisorLoginOpen(true)} />;
+  return <LoginScreen onLogin={(code, password) => login('', code, password)} onOpenAdmin={() => setSupervisorLoginOpen(true)} />;
 }
 
 function LoginScreen({
   onLogin,
   onOpenAdmin,
 }: {
-  onLogin: (kind: ProfileKind, code: string, password: string) => Promise<void>;
+  onLogin: (code: string, password: string) => Promise<void>;
   onOpenAdmin: () => void;
 }) {
-  const [kind, setKind] = useState<ProfileKind>('inspetor');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) return;
     setError('');
+    setSubmitting(true);
     try {
-      await onLogin(kind, code, password);
+      await onLogin(code, password);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Não foi possível validar o acesso.');
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -278,37 +290,21 @@ function LoginScreen({
       <section className="login-card">
         <div className="login-brand-panel"><Brand /></div>
         <h1>Acesso da equipe</h1>
-        <p className="login-intro">Selecione o tipo de acesso e informe o código e a senha fornecidos pelo supervisor.</p>
+        <p className="login-intro">Informe o código e a senha fornecidos pelo supervisor. O código identifica sua equipe e sua carteira.</p>
 
         <form onSubmit={handleSubmit} className="login-form">
-          <fieldset className="field-group">
-            <legend>Tipo de equipe</legend>
-            <div className="segmented-control segmented-four">
-              {(['inspetor', 'vencer', 'nper', 'neoenergia'] as ProfileKind[]).map((option) => (
-                <button
-                  type="button"
-                  key={option}
-                  className={kind === option ? 'segment active' : 'segment'}
-                  onClick={() => { setKind(option); setCode(''); setPassword(''); }}
-                >
-                  {kindLabels[option]}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
           <label className="field-group">
             <span>Código de acesso</span>
-            <input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Ex.: INSP-04" autoComplete="username" />
+            <input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Ex.: NEO-1524" autoComplete="username" required />
           </label>
 
           <label className="field-group">
             <span>Senha</span>
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Digite a senha do perfil" autoComplete="current-password" />
+            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Digite a senha do perfil" autoComplete="current-password" required />
           </label>
 
           {error && <div className="inline-error" role="alert">{error}</div>}
-          <button className="button button-primary button-full" type="submit">Entrar nas ordens</button>
+          <button className="button button-primary button-full" type="submit" disabled={submitting}>{submitting ? 'Validando acesso…' : 'Entrar nas ordens'}</button>
         </form>
 
         <p className="login-note">As ordens aparecem conforme o perfil autorizado pelo supervisor.</p>
@@ -655,6 +651,8 @@ function AdminApp({
   setProfiles,
   imports,
   setImports,
+  saveStatus,
+  onRetrySave,
   onLogout,
 }: {
   orders: Order[];
@@ -663,6 +661,8 @@ function AdminApp({
   setProfiles: (profiles: AccessProfile[]) => void;
   imports: ImportRecord[];
   setImports: (imports: ImportRecord[]) => void;
+  saveStatus: AdminSaveStatus;
+  onRetrySave: () => void;
   onLogout: () => void;
 }) {
   const [page, setPage] = useState<AdminPage>('painel');
@@ -671,6 +671,17 @@ function AdminApp({
   const [teamFilter, setTeamFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [serviceFilter, setServiceFilter] = useState('');
+  const [createdProfile, setCreatedProfile] = useState<AccessProfile | null>(null);
+
+  useEffect(() => {
+    if (!createdProfile) return;
+    const warnAboutOneTimePassword = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnAboutOneTimePassword);
+    return () => window.removeEventListener('beforeunload', warnAboutOneTimePassword);
+  }, [createdProfile]);
   const filteredOrders = useMemo(() => orders.filter((order) => {
     const searchValue = normalize(search);
     const textMatch = !searchValue || [order.numConsequencia, order.equipe, order.servico, order.protocolo, order.responsavel]
@@ -725,6 +736,10 @@ function AdminApp({
           </div>
           <div className="topbar-actions">
             <span className="period-chip">Dados compartilhados</span>
+            <span className={'save-status save-status-' + saveStatus} role="status">
+              {saveStatus === 'saving' ? 'Salvando…' : saveStatus === 'saved' ? 'Salvo no servidor' : saveStatus === 'error' ? 'Falha ao salvar' : 'Conectado'}
+            </span>
+            {saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}
             <button className="button button-primary export-button" onClick={exportCurrent}>Exportar Excel</button>
           </div>
         </header>
@@ -747,7 +762,7 @@ function AdminApp({
         )}
         {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} teamChoices={availableTeams} />}
         {page === 'protocolos' && <ProtocolsPage orders={orders} />}
-        {page === 'acessos' && <AccessPage profiles={profiles} setProfiles={setProfiles} teamChoices={availableTeams} />}
+        {page === 'acessos' && <AccessPage profiles={profiles} setProfiles={setProfiles} teamChoices={availableTeams} saveStatus={saveStatus} onRetrySave={onRetrySave} created={createdProfile} setCreated={setCreatedProfile} />}
       </div>
     </div>
   );
@@ -1217,14 +1232,13 @@ function ProtocolsPage({ orders }: { orders: Order[] }) {
   );
 }
 
-function AccessPage({ profiles, setProfiles, teamChoices }: { profiles: AccessProfile[]; setProfiles: (profiles: AccessProfile[]) => void; teamChoices: string[] }) {
+function AccessPage({ profiles, setProfiles, teamChoices, saveStatus, onRetrySave, created, setCreated }: { profiles: AccessProfile[]; setProfiles: (profiles: AccessProfile[]) => void; teamChoices: string[]; saveStatus: AdminSaveStatus; onRetrySave: () => void; created: AccessProfile | null; setCreated: (profile: AccessProfile | null) => void }) {
   const [showForm, setShowForm] = useState(false);
   const [kind, setKind] = useState<ProfileKind>('inspetor');
   const [team, setTeam] = useState(teamOptions[0]);
   const [responsible, setResponsible] = useState('');
   const [operatorName, setOperatorName] = useState('');
   const [label, setLabel] = useState('');
-  const [created, setCreated] = useState<AccessProfile | null>(null);
   const [error, setError] = useState('');
 
   function createAccess(event: FormEvent<HTMLFormElement>) {
@@ -1267,9 +1281,9 @@ function AccessPage({ profiles, setProfiles, teamChoices }: { profiles: AccessPr
   return (
     <main className="admin-content">
       <section className="panel access-panel">
-        <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Cada perfil libera somente a carteira vinculada.</p></div><button className="button button-primary" onClick={() => { setShowForm((value) => !value); setCreated(null); }}>+ Criar perfil</button></div>
+        <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Cada perfil libera somente a carteira vinculada.</p></div><button className="button button-primary" onClick={() => setShowForm((value) => !value)}>+ Criar perfil</button></div>
         <div className="security-note"><strong>Atribuição por acesso</strong><span>O acesso guarda o nome auditado. Para Vencer, vincule também o responsável da planilha para limitar a carteira às ordens correspondentes.</span></div>
-        {created && <div className="created-credentials"><div><strong>Acesso criado</strong><span>Guarde estes dados e repasse ao perfil correspondente.</span></div><code>{created.code} / {created.password}</code><button className="text-button" onClick={() => setCreated(null)}>Fechar</button></div>}
+        {created && <div className="created-credentials"><div><strong>{saveStatus === 'error' ? 'Acesso ainda não salvo' : saveStatus === 'saved' ? 'Acesso salvo no servidor' : 'Salvando acesso no servidor…'}</strong><span>{kindLabels[created.kind]} · {created.team}{created.responsible ? ' · ' + created.responsible : ''} · {created.operatorName}</span><span>{saveStatus === 'error' ? 'Não repasse este acesso ainda. Tente salvar novamente.' : saveStatus === 'saved' ? 'Guarde os dados: a senha não poderá ser consultada depois.' : 'Aguarde a confirmação antes de repassar o código e a senha.'}</span></div>{saveStatus === 'saved' && <code>{created.code} / {created.password}</code>}{saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}{saveStatus === 'saved' && <button className="text-button" onClick={() => setCreated(null)}>Fechar</button>}</div>}
         {showForm && (
           <form className="access-form" onSubmit={createAccess}>
             <div className="form-heading"><h3>Novo perfil</h3><p>O supervisor administra os códigos; nenhum cadastro é feito pela equipe.</p></div>

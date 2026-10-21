@@ -197,6 +197,10 @@ h1, h2, h3, p { margin-top: 0; }
 .admin-topbar p { margin: 0; color: #71848d; font-size: 12px; }
 .topbar-actions { display: flex; align-items: center; gap: 11px; }
 .period-chip { color: #5d7680; background: #f7fafb; }
+.save-status { display: inline-flex; align-items: center; min-height: 28px; padding: 0 9px; border: 1px solid #dce6e9; border-radius: 20px; color: #55717b; background: #f8fbfb; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.save-status-saving { border-color: #f1ddb1; color: #87631a; background: #fff9e9; }
+.save-status-saved { border-color: #c7e6d3; color: #276545; background: #f1faf4; }
+.save-status-error { border-color: #efc9c2; color: #9a3426; background: #fff5f2; }
 .admin-content { display: grid; gap: 18px; padding: 24px clamp(24px, 4vw, 54px) 40px; }
 .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; }
 .stat-card { display: grid; min-height: 111px; align-content: center; gap: 6px; padding: 15px 17px; border: 1px solid #e0e9ec; border-radius: 9px; color: #607681; background: #fff; text-align: left; }
@@ -365,6 +369,8 @@ h1, h2, h3, p { margin-top: 0; }
   .admin-topbar h1 { font-size: 20px; }
   .admin-topbar p { max-width: 400px; font-size: 11px; }
   .topbar-actions .period-chip { display: none; }
+  .topbar-actions { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+  .save-status { min-height: 25px; padding: 0 7px; font-size: 9px; }
   .admin-content { gap: 13px; padding: 16px 14px 28px; }
   .panel { padding: 15px; }
   .filter-row select { flex: 1 1 125px; min-width: 0; }
