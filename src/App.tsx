@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
-import { demoImports, demoOrders, demoProfiles, teamOptions } from './data/sample-data';
-import { loadImports, loadOrders, loadProfiles, resetDemoData, saveImports, saveOrders, saveProfiles } from './data/storage';
+import { teamOptions } from './data/sample-data';
+import { apiRequest, readSharedState } from './data/api';
+import type { SharedAppState, SyncCursor } from './data/api';
 import { exportControlWorkbook, mapSpreadsheetRow, readWorkbook, rowsFromSheet } from './lib/excel';
 import type { ParsedWorkbook } from './lib/excel';
 import type { AccessProfile, AdminPage, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
@@ -12,8 +13,6 @@ const kindLabels: Record<ProfileKind, string> = {
   nper: 'NPER',
   neoenergia: 'Neoenergia',
 };
-
-const supervisorDemoCredentials = { code: 'SUPERVISOR', password: 'demo' };
 
 const pageLabels: Record<AdminPage, { title: string; subtitle: string }> = {
   painel: { title: 'Visão geral', subtitle: 'Ordens executadas, pendências e produtividade das equipes.' },
@@ -71,12 +70,6 @@ function formatDate(value?: string): string {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date);
 }
 
-function makeProtocol(): string {
-  const year = new Date().getFullYear();
-  const code = Date.now().toString(36).toUpperCase();
-  return 'NEO-' + year + '-' + code;
-}
-
 function statusText(status: OrderStatus): string {
   if (status === 'executada') return 'Executada';
   if (status === 'impedimento') return 'Impedimento';
@@ -97,87 +90,187 @@ function StatusBadge({ status }: { status: OrderStatus }) {
 }
 
 export default function App() {
-  const [orders, setOrders] = useState<Order[]>(loadOrders);
-  const [profiles, setProfiles] = useState<AccessProfile[]>(loadProfiles);
-  const [imports, setImports] = useState<ImportRecord[]>(loadImports);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [profiles, setProfiles] = useState<AccessProfile[]>([]);
+  const [imports, setImports] = useState<ImportRecord[]>([]);
   const [session, setSession] = useState<SessionProfile | null>(null);
   const [adminMode, setAdminMode] = useState(false);
   const [supervisorLoginOpen, setSupervisorLoginOpen] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [connectionError, setConnectionError] = useState('');
+  const [saveRevision, setSaveRevision] = useState(0);
+  const dirtyRevision = useRef(0);
+  const adminDirty = useRef(false);
+  const syncCursor = useRef<SyncCursor | null>(null);
 
-  useEffect(() => saveOrders(orders), [orders]);
-  useEffect(() => saveProfiles(profiles), [profiles]);
-  useEffect(() => saveImports(imports), [imports]);
+  function applyState(state: SharedAppState) {
+    setOrders(state.orders);
+    setProfiles(state.profiles);
+    setImports(state.imports);
+    if (state.sync) syncCursor.current = state.sync;
+  }
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<{ session: { isAdmin: boolean; kind: string; label: string; team: string; responsible?: string; operatorName: string }; state: { orders: Order[]; profiles: AccessProfile[]; imports: ImportRecord[] } }>('/api/session')
+      .then(({ session: remoteSession, state }) => {
+        if (!active) return;
+        applyState(state);
+        setAdminMode(remoteSession.isAdmin);
+        if (!remoteSession.isAdmin) setSession(remoteSession as SessionProfile);
+        setConnectionError('');
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : '';
+        if (message !== 'Sem sessão.') setConnectionError(message || 'Não foi possível conectar ao servidor.');
+      })
+      .finally(() => { if (active) setReady(true); });
+    return () => { active = false; };
+  }, []);
+
+  async function login(kind: ProfileKind | 'admin', code: string, password: string) {
+    const response = await apiRequest<{ session: { isAdmin: boolean; kind: string; label: string; team: string; responsible?: string; operatorName: string }; state: { orders: Order[]; profiles: AccessProfile[]; imports: ImportRecord[] } }>('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ kind, code, password }),
+    });
+    applyState(response.state);
+    setConnectionError('');
+    setSupervisorLoginOpen(false);
+    setAdminMode(response.session.isAdmin);
+    if (response.session.isAdmin) setSession(null);
+    else setSession(response.session as SessionProfile);
+  }
+
+  async function logout() {
+    try { await apiRequest('/api/logout', { method: 'POST', body: '{}' }); } catch { /* Encerrar a tela também remove o uso local da sessão. */ }
+    setAdminMode(false);
+    setSession(null);
+    setSupervisorLoginOpen(false);
+    setOrders([]);
+    setProfiles([]);
+    setImports([]);
+  }
+
+  function markAdminStateDirty() {
+    if (!adminMode) return;
+    adminDirty.current = true;
+    dirtyRevision.current += 1;
+    setSaveRevision(dirtyRevision.current);
+  }
+
+  function updateOrders(next: Order[]) { setOrders(next); markAdminStateDirty(); }
+  function updateProfiles(next: AccessProfile[]) { setProfiles(next); markAdminStateDirty(); }
+  function updateImports(next: ImportRecord[]) { setImports(next); markAdminStateDirty(); }
+
+  useEffect(() => {
+    if (!ready || !adminMode || !adminDirty.current) return;
+    const revision = saveRevision;
+    const timer = window.setTimeout(() => {
+      void apiRequest('/api/admin/state', {
+        method: 'POST',
+        body: JSON.stringify({ orders, profiles, imports }),
+      }).then(() => {
+        if (dirtyRevision.current === revision) adminDirty.current = false;
+      }).catch((error: unknown) => {
+        setConnectionError(error instanceof Error ? error.message : 'Não foi possível salvar as alterações.');
+      });
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [ready, adminMode, saveRevision, orders, profiles, imports]);
+
+  useEffect(() => {
+    if (!ready || (!adminMode && !session)) return;
+    let active = true;
+    let refreshing = false;
+    const refresh = async () => {
+      if (!active || refreshing || document.visibilityState !== 'visible') return;
+      if (adminMode && adminDirty.current) return;
+      refreshing = true;
+      try {
+        const state = await readSharedState(syncCursor.current);
+        if (!active) return;
+        const isFullSync = state.full !== false;
+        if (state.sync) syncCursor.current = state.sync;
+        if (state.unchanged) return;
+        if (isFullSync) {
+          setOrders((current) => JSON.stringify(current) === JSON.stringify(state.orders) ? current : state.orders);
+          if (adminMode) {
+            setProfiles((current) => JSON.stringify(current) === JSON.stringify(state.profiles) ? current : state.profiles);
+            setImports((current) => JSON.stringify(current) === JSON.stringify(state.imports) ? current : state.imports);
+          }
+        } else if (state.orders.length) {
+          const changedOrders = new Map(state.orders.map((order) => [order.id, order]));
+          setOrders((current) => {
+            const currentIds = new Set(current.map((order) => order.id));
+            const merged = current.map((order) => changedOrders.get(order.id) ?? order);
+            for (const order of state.orders) if (!currentIds.has(order.id)) merged.push(order);
+            return merged;
+          });
+        }
+      } catch {
+        // A próxima atualização tenta novamente sem interromper a tela atual.
+      } finally {
+        refreshing = false;
+      }
+    };
+    const timer = window.setInterval(() => { void refresh(); }, 15000);
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') void refresh(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [ready, adminMode, session]);
+
+  if (!ready) return <main className="login-page"><section className="login-card"><div className="login-brand-panel"><Brand /></div><h1>Conectando ao sistema</h1><p className="login-intro">Carregando os dados compartilhados.</p></section></main>;
+  if (connectionError && !session && !adminMode) return <main className="login-page"><section className="login-card"><div className="login-brand-panel"><Brand /></div><h1>Servidor indisponível</h1><p className="login-intro">{connectionError}</p><button className="button button-primary button-full" onClick={() => window.location.reload()}>Tentar novamente</button></section></main>;
 
   if (adminMode) {
     return (
       <AdminApp
         orders={orders}
-        setOrders={setOrders}
+        setOrders={updateOrders}
         profiles={profiles}
-        setProfiles={setProfiles}
+        setProfiles={updateProfiles}
         imports={imports}
-        setImports={setImports}
-        onLogout={() => { setAdminMode(false); setSupervisorLoginOpen(false); }}
-        onReset={() => {
-          resetDemoData();
-          setOrders(demoOrders);
-          setProfiles(demoProfiles);
-          setImports(demoImports);
-        }}
+        setImports={updateImports}
+        onLogout={() => { void logout(); }}
       />
     );
   }
 
   if (session) {
-    return <FieldApp session={session} orders={orders} setOrders={setOrders} onLogout={() => setSession(null)} />;
+    return <FieldApp session={session} orders={orders} setOrders={setOrders} onLogout={() => { void logout(); }} />;
   }
 
   if (supervisorLoginOpen) {
-    return <SupervisorLogin onBack={() => setSupervisorLoginOpen(false)} onLogin={() => { setSupervisorLoginOpen(false); setAdminMode(true); }} />;
+    return <SupervisorLogin onBack={() => setSupervisorLoginOpen(false)} onLogin={(code, password) => login('admin', code, password)} />;
   }
 
-  return <LoginScreen profiles={profiles} onLogin={setSession} onOpenAdmin={() => setSupervisorLoginOpen(true)} />;
+  return <LoginScreen onLogin={(kind, code, password) => login(kind, code, password)} onOpenAdmin={() => setSupervisorLoginOpen(true)} />;
 }
 
 function LoginScreen({
-  profiles,
   onLogin,
   onOpenAdmin,
 }: {
-  profiles: AccessProfile[];
-  onLogin: (session: SessionProfile) => void;
+  onLogin: (kind: ProfileKind, code: string, password: string) => Promise<void>;
   onOpenAdmin: () => void;
 }) {
   const [kind, setKind] = useState<ProfileKind>('inspetor');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const matched = profiles.find((profile) => profile.kind === kind && normalize(profile.code) === normalize(code));
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
-    const profile = profiles.find(
-      (item) => item.kind === kind && item.active && normalize(item.code) === normalize(code) && item.password === password,
-    );
-    if (!profile) {
-      setError('Código, senha ou perfil inválido. Confira os dados ou peça ajuda ao supervisor.');
-      return;
+    try {
+      await onLogin(kind, code, password);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Não foi possível validar o acesso.');
     }
-    onLogin({
-      kind: profile.kind,
-      label: profile.label,
-      team: profile.team,
-      responsible: profile.responsible,
-      operatorName: profile.operatorName?.trim() || profile.responsible?.trim() || profile.label,
-    });
-  }
-
-  function fillDemo(profile: AccessProfile) {
-    setKind(profile.kind);
-    setCode(profile.code);
-    setPassword(profile.password);
-    setError('');
   }
 
   return (
@@ -214,10 +307,6 @@ function LoginScreen({
             <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Digite a senha do perfil" autoComplete="current-password" />
           </label>
 
-          {(kind === 'vencer' || kind === 'nper') && matched?.responsible && (
-            <div className="responsible-confirmation"><span>Responsável vinculado</span><strong>{matched.responsible}</strong></div>
-          )}
-
           {error && <div className="inline-error" role="alert">{error}</div>}
           <button className="button button-primary button-full" type="submit">Entrar nas ordens</button>
         </form>
@@ -225,35 +314,24 @@ function LoginScreen({
         <p className="login-note">As ordens aparecem conforme o perfil autorizado pelo supervisor.</p>
         <button className="button button-outline button-full" onClick={onOpenAdmin}>Acesso do supervisor</button>
 
-        <details className="demo-access">
-          <summary>Acessos da demonstração</summary>
-          <div className="demo-access-list">
-            {profiles.filter((profile) => profile.active).map((profile) => (
-              <button type="button" key={profile.id} onClick={() => fillDemo(profile)}>
-                <span>{profile.label}<small>{profile.operatorName || profile.responsible || profile.label}</small></span><code>{profile.code} / {profile.password}</code>
-              </button>
-            ))}
-            <small>Dados demonstrativos, salvos apenas neste navegador.</small>
-          </div>
-        </details>
       </section>
-      <div className="prototype-warning">Protótipo demonstrativo • não use informações operacionais reais</div>
     </main>
   );
 }
 
-function SupervisorLogin({ onBack, onLogin }: { onBack: () => void; onLogin: () => void }) {
+function SupervisorLogin({ onBack, onLogin }: { onBack: () => void; onLogin: (code: string, password: string) => Promise<void> }) {
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (normalize(code) !== normalize(supervisorDemoCredentials.code) || password !== supervisorDemoCredentials.password) {
-      setError('Código ou senha do supervisor inválidos.');
-      return;
+    setError('');
+    try {
+      await onLogin(code, password);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Não foi possível validar o acesso.');
     }
-    onLogin();
   }
 
   return (
@@ -269,10 +347,7 @@ function SupervisorLogin({ onBack, onLogin }: { onBack: () => void; onLogin: () 
           <button className="button button-primary button-full" type="submit">Entrar na administração</button>
         </form>
         <button className="button button-ghost button-full" onClick={onBack}>Voltar ao acesso das equipes</button>
-        <details className="demo-access"><summary>Acesso demonstrativo</summary><div className="demo-access-list"><div className="supervisor-demo-credential"><code>SUPERVISOR / demo</code><small>Somente para esta prévia.</small></div></div></details>
-        <div className="security-note"><strong>Protótipo demonstrativo</strong><span>Este login é uma barreira de demonstração. A autenticação real precisa ser validada no servidor antes de usar dados operacionais.</span></div>
       </section>
-      <div className="prototype-warning">Protótipo demonstrativo • não use informações operacionais reais</div>
     </main>
   );
 }
@@ -299,6 +374,23 @@ function FieldApp({
   const [reason, setReason] = useState('');
   const [photo, setPhoto] = useState('');
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const hasUnsavedDraft = page === 'registro' && (
+    quantity !== null || observation.trim().length > 0 || reason.length > 0 || photo.length > 0
+  );
+
+  useEffect(() => {
+    if (!hasUnsavedDraft) return;
+
+    const confirmBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', confirmBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', confirmBeforeLeaving);
+  }, [hasUnsavedDraft]);
 
   const assignedOrders = useMemo(() => orders.filter((order) => {
     const matchesTeam = normalize(order.equipe) === normalize(session.team);
@@ -316,6 +408,11 @@ function FieldApp({
   }), [assignedOrders, query, tab]);
 
   const selectedOrder = orders.find((order) => order.id === orderId) ?? null;
+
+  function leaveExecutionForm() {
+    if (hasUnsavedDraft && !window.confirm('Há informações do serviço ainda não enviadas. Se sair agora, elas serão perdidas. Deseja sair mesmo assim?')) return;
+    setPage('lista');
+  }
 
   function openOrder(order: Order) {
     setOrderId(order.id);
@@ -341,7 +438,8 @@ function FieldApp({
     reader.readAsDataURL(file);
   }
 
-  function saveExecution() {
+  async function saveExecution() {
+    if (saving) return;
     if (!selectedOrder) return;
     if (executionMode === 'impedimento' && (!reason || !observation.trim())) {
       setError('Informe o motivo e explique o impedimento antes de salvar.');
@@ -359,21 +457,29 @@ function FieldApp({
       setError('Explique na observação por que a quantidade executada ficou abaixo da ajustada.');
       return;
     }
-    const updated: Order = {
-      ...selectedOrder,
-      status: executionMode,
-      qtdExecutada: executionMode === 'executada' ? quantity ?? undefined : undefined,
-      observacao: observation.trim(),
-      motivoImpedimento: executionMode === 'impedimento' ? reason : undefined,
-      foto: executionMode === 'impedimento' ? photo : undefined,
-      protocolo: makeProtocol(),
-      registradoPor: session.operatorName,
-      dataRegistro: new Date().toISOString(),
-    };
-    setOrders(orders.map((order) => order.id === updated.id ? updated : order));
-    setLastSaved(updated);
-    setPage('protocolo');
     setError('');
+    setSaving(true);
+    try {
+      const response = await apiRequest<{ order: Order }>('/api/executions', {
+        method: 'POST',
+        body: JSON.stringify({
+          orderId: selectedOrder.id,
+          status: executionMode,
+          qtdExecutada: executionMode === 'executada' ? quantity : undefined,
+          observacao: observation.trim(),
+          motivoImpedimento: executionMode === 'impedimento' ? reason : undefined,
+          foto: executionMode === 'impedimento' ? photo : undefined,
+        }),
+      });
+      const updated = response.order;
+      setOrders(orders.map((order) => order.id === updated.id ? updated : order));
+      setLastSaved(updated);
+      setPage('protocolo');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Não foi possível registrar a execução.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (page === 'protocolo' && lastSaved) {
@@ -411,7 +517,7 @@ function FieldApp({
       <main className="field-page">
         <div className="field-shell">
           <div className="field-header"><Brand /><span className="team-chip">{session.team}</span></div>
-          <button className="back-link" onClick={() => setPage('lista')}>← Voltar às ordens</button>
+          <button className="back-link" onClick={leaveExecutionForm}>← Voltar às ordens</button>
           <h1>{executionMode === 'impedimento' ? 'Registrar impedimento' : 'Registrar execução'}</h1>
           <OrderSummary order={selectedOrder} />
 
@@ -550,7 +656,6 @@ function AdminApp({
   imports,
   setImports,
   onLogout,
-  onReset,
 }: {
   orders: Order[];
   setOrders: (orders: Order[]) => void;
@@ -559,7 +664,6 @@ function AdminApp({
   imports: ImportRecord[];
   setImports: (imports: ImportRecord[]) => void;
   onLogout: () => void;
-  onReset: () => void;
 }) {
   const [page, setPage] = useState<AdminPage>('painel');
   const [navOpen, setNavOpen] = useState(false);
@@ -605,7 +709,6 @@ function AdminApp({
         </nav>
         <div className="sidebar-bottom">
           <span className="admin-label"><span className="online-dot" />Supervisor</span>
-          <button className="sidebar-text-button" onClick={onReset}>Restaurar dados da demonstração</button>
           <button className="sidebar-text-button logout-button" onClick={onLogout}>Sair da administração</button>
         </div>
       </aside>
@@ -621,7 +724,7 @@ function AdminApp({
             <p>{pageLabels[page].subtitle}</p>
           </div>
           <div className="topbar-actions">
-            <span className="period-chip">Base demonstrativa</span>
+            <span className="period-chip">Dados compartilhados</span>
             <button className="button button-primary export-button" onClick={exportCurrent}>Exportar Excel</button>
           </div>
         </header>
@@ -1184,7 +1287,7 @@ function AccessPage({ profiles, setProfiles, teamChoices }: { profiles: AccessPr
         <div className="table-scroll"><table className="admin-table access-table"><thead><tr><th>Perfil</th><th>Tipo</th><th>Equipe</th><th>Nome auditado</th><th>Responsável da planilha</th><th>Código</th><th>Estado</th><th>Ação</th></tr></thead>
           <tbody>{profiles.map((profile) => <tr key={profile.id}><td><strong>{profile.label}</strong></td><td>{kindLabels[profile.kind]}</td><td>{profile.team}</td><td>{profile.operatorName || profile.responsible || profile.label}</td><td>{profile.responsible || '—'}</td><td><code>{profile.code}</code></td><td><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button></td></tr>)}</tbody>
         </table></div>
-        <p className="local-warning">Demonstração local: códigos e senhas ficam neste navegador. A proteção real depende de autenticação e regras no banco.</p>
+        <p className="local-warning">Os perfis e as ordens são salvos no servidor. As senhas são protegidas e não podem ser consultadas depois de criadas.</p>
       </section>
     </main>
   );
