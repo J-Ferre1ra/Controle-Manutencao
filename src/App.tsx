@@ -110,6 +110,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [connectionError, setConnectionError] = useState('');
   const [adminSaveStatus, setAdminSaveStatus] = useState<AdminSaveStatus>('idle');
+  const [adminSaveError, setAdminSaveError] = useState('');
   const [saveRevision, setSaveRevision] = useState(0);
   const dirtyRevision = useRef(0);
   const adminDirty = useRef(false);
@@ -174,6 +175,7 @@ export default function App() {
       dirtyAdminSections.current.add('imports');
     }
     adminDirty.current = true;
+    setAdminSaveError('');
     setAdminSaveStatus('saving');
     dirtyRevision.current += 1;
     setSaveRevision(dirtyRevision.current);
@@ -195,10 +197,14 @@ export default function App() {
         if (dirtyRevision.current === revision) {
           adminDirty.current = false;
           dirtyAdminSections.current.clear();
+          setAdminSaveError('');
           setAdminSaveStatus('saved');
         }
-      }).catch(() => {
-        if (dirtyRevision.current === revision) setAdminSaveStatus('error');
+      }).catch((error: unknown) => {
+        if (dirtyRevision.current === revision) {
+          setAdminSaveError(error instanceof Error ? error.message : 'Falha desconhecida ao salvar.');
+          setAdminSaveStatus('error');
+        }
       });
     }, 500);
     return () => window.clearTimeout(timer);
@@ -262,6 +268,7 @@ export default function App() {
         imports={imports}
         setImports={updateImports}
         saveStatus={adminSaveStatus}
+        saveError={adminSaveError}
         onRetrySave={() => {
           if (dirtyAdminSections.current.size) {
             const pending = [...dirtyAdminSections.current];
@@ -685,6 +692,7 @@ function AdminApp({
   imports,
   setImports,
   saveStatus,
+  saveError,
   onRetrySave,
   onLogout,
 }: {
@@ -695,6 +703,7 @@ function AdminApp({
   imports: ImportRecord[];
   setImports: (imports: ImportRecord[]) => void;
   saveStatus: AdminSaveStatus;
+  saveError: string;
   onRetrySave: () => void;
   onLogout: () => void;
 }) {
@@ -797,7 +806,7 @@ function AdminApp({
         )}
         {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} onExportPortfolio={exportPortfolio} />}
         {page === 'protocolos' && <ProtocolsPage orders={orders} />}
-        {page === 'acessos' && <AccessPage orders={orders} profiles={profiles} setProfiles={setProfiles} saveStatus={saveStatus} onRetrySave={onRetrySave} created={createdProfile} setCreated={setCreatedProfile} />}
+        {page === 'acessos' && <AccessPage orders={orders} profiles={profiles} setProfiles={setProfiles} saveStatus={saveStatus} saveError={saveError} onRetrySave={onRetrySave} created={createdProfile} setCreated={setCreatedProfile} />}
       </div>
     </div>
   );
@@ -1272,7 +1281,7 @@ function ProtocolsPage({ orders }: { orders: Order[] }) {
   );
 }
 
-function AccessPage({ orders, profiles, setProfiles, saveStatus, onRetrySave, created, setCreated }: { orders: Order[]; profiles: AccessProfile[]; setProfiles: (profiles: AccessProfile[]) => void; saveStatus: AdminSaveStatus; onRetrySave: () => void; created: AccessProfile | null; setCreated: (profile: AccessProfile | null) => void }) {
+function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRetrySave, created, setCreated }: { orders: Order[]; profiles: AccessProfile[]; setProfiles: (profiles: AccessProfile[]) => void; saveStatus: AdminSaveStatus; saveError: string; onRetrySave: () => void; created: AccessProfile | null; setCreated: (profile: AccessProfile | null) => void }) {
   type NewProfileKind = 'neoenergia' | 'vencer';
   const [showForm, setShowForm] = useState(false);
   const [kind, setKind] = useState<NewProfileKind>('neoenergia');
@@ -1357,7 +1366,7 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, onRetrySave, cr
       <section className="panel access-panel">
         <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Cada acesso libera somente as ordens do responsável selecionado.</p></div><button className="button button-primary" onClick={() => setShowForm((value) => !value)}>+ Criar perfil</button></div>
         <div className="security-note"><strong>Escopo do acesso</strong><span>Escolha Neoenergia ou Vencer e vincule ao RESPONSÁVEL da carteira. O campo equipe/carteira foi removido; Inspetor entra no grupo Neoenergia.</span></div>
-        {created && <div className="created-credentials"><div><strong>{saveStatus === 'error' ? 'Acesso ainda não salvo' : saveStatus === 'saved' ? 'Acesso salvo no servidor' : 'Salvando acesso no servidor…'}</strong><span>{kindLabels[created.kind]} · {created.responsible || created.team || 'Sem responsável'} · {created.operatorName}</span><span>{saveStatus === 'error' ? 'Não repasse este acesso ainda. Tente salvar novamente.' : saveStatus === 'saved' ? 'Guarde os dados: a senha não poderá ser consultada depois.' : 'Aguarde a confirmação antes de repassar o código e a senha.'}</span></div>{saveStatus === 'saved' && <code>{created.code} / {created.password}</code>}{saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}{saveStatus === 'saved' && <button className="text-button" onClick={() => setCreated(null)}>Fechar</button>}</div>}
+        {created && <div className="created-credentials"><div><strong>{saveStatus === 'error' ? 'Acesso ainda não salvo' : saveStatus === 'saved' ? 'Acesso salvo no servidor' : 'Salvando acesso no servidor…'}</strong><span>{kindLabels[created.kind]} · {created.responsible || created.team || 'Sem responsável'} · {created.operatorName}</span><span>{saveStatus === 'error' ? (saveError || 'Não repasse este acesso ainda. Tente salvar novamente.') : saveStatus === 'saved' ? 'Guarde os dados: a senha não poderá ser consultada depois.' : 'Aguarde a confirmação antes de repassar o código e a senha.'}</span></div>{saveStatus === 'saved' && <code>{created.code} / {created.password}</code>}{saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}{saveStatus === 'saved' && <button className="text-button" onClick={() => setCreated(null)}>Fechar</button>}</div>}
         {showForm && (
           <form className="access-form" onSubmit={createAccess}>
             <div className="form-heading"><h3>Novo perfil</h3><p>Defina o tipo, o responsável e as credenciais que serão entregues à equipe.</p></div>

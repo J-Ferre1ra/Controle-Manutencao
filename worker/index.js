@@ -424,7 +424,13 @@ async function route(request, env) {
   if (path === '/api/state' && request.method === 'GET') return json(await readIncrementalState(env, session, url));
   if (path === '/api/admin/state' && request.method === 'POST') {
     if (!session.isAdmin) return json({ error: 'Apenas o supervisor pode alterar a carteira.' }, 403);
-    return saveAdminState(request, env);
+    try {
+      return await saveAdminState(request, env);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error('Admin state save failed:', error);
+      return json({ error: `Falha ao salvar no servidor: ${detail.slice(0, 240)}` }, 500);
+    }
   }
   if (path === '/api/executions' && request.method === 'POST') return updateExecution(request, env, session);
   if (path.startsWith('/api/photos/') && request.method === 'GET') {
@@ -441,7 +447,8 @@ export default {
         return new Response('Método não permitido.', { status: 405, headers: { allow: 'GET, POST, OPTIONS' } });
       }
       return await route(request, env);
-    } catch {
+    } catch (error) {
+      console.error('Worker request failed:', error);
       return json({ error: 'Falha temporária no servidor. Tente novamente.' }, 500);
     }
   },
