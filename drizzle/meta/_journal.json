@@ -15,6 +15,13 @@
       "when": 1792540801000,
       "tag": "0001_sync_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792800002000,
+      "tag": "0002_responsible_scope",
+      "breakpoints": true
     }
   ]
 }

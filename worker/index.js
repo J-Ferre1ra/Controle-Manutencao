@@ -13,6 +13,15 @@ function normalize(value) {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
+function canonicalCompany(value) {
+  const company = normalize(value);
+  return company === 'nper' ? 'neoenergia' : company;
+}
+
+function canonicalProfileKind(value) {
+  return normalize(value) === 'vencer' ? 'vencer' : 'neoenergia';
+}
+
 function base64url(bytes) {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -67,9 +76,9 @@ function publicProfile(raw) {
 function getScope(profile) {
   return {
     id: profile.id,
-    kind: profile.kind,
+    kind: canonicalProfileKind(profile.kind),
     label: profile.label,
-    team: profile.team,
+    team: String(profile.team || ''),
     responsible: profile.responsible || '',
     operatorName: profile.operatorName || profile.responsible || profile.label,
   };
@@ -93,14 +102,23 @@ async function readSession(request, env) {
 
 function allowedOrder(session, order) {
   if (session.isAdmin) return true;
-  return normalize(order.equipe) === normalize(session.team) &&
-    (!session.responsible || normalize(order.responsavel) === normalize(session.responsible));
+  const hasTeamScope = Boolean(normalize(session.team));
+  const hasResponsibleScope = Boolean(normalize(session.responsible));
+  if (!hasTeamScope && !hasResponsibleScope) return false;
+  const company = canonicalCompany(order.empresa);
+  const profileKind = canonicalProfileKind(session.kind);
+  const matchesCompany = profileKind === 'vencer' ? company === 'vencer' : company === 'neoenergia';
+  const matchesTeam = !hasTeamScope || normalize(order.equipe) === normalize(session.team);
+  const matchesResponsible = !hasResponsibleScope || normalize(order.responsavel) === normalize(session.responsible);
+  return matchesCompany && matchesTeam && matchesResponsible;
 }
 
 async function readOrders(env, session) {
-  const statement = session.isAdmin
-    ? env.DB.prepare('SELECT payload_json FROM work_orders ORDER BY id')
-    : env.DB.prepare('SELECT payload_json FROM work_orders WHERE team = ?1 COLLATE NOCASE ORDER BY id').bind(session.team);
+  let statement;
+  if (session.isAdmin) statement = env.DB.prepare('SELECT payload_json FROM work_orders ORDER BY id');
+  else if (normalize(session.team)) statement = env.DB.prepare('SELECT payload_json FROM work_orders WHERE team = ?1 COLLATE NOCASE ORDER BY id').bind(session.team);
+  else if (normalize(session.responsible)) statement = env.DB.prepare('SELECT payload_json FROM work_orders WHERE responsible = ?1 COLLATE NOCASE ORDER BY id').bind(session.responsible);
+  else return [];
   const result = await statement.all();
   const orders = result.results.map((row) => JSON.parse(row.payload_json));
   return session.isAdmin ? orders : orders.filter((order) => allowedOrder(session, order));
@@ -144,9 +162,16 @@ async function readIncrementalState(env, session, url) {
     return { orders: [], profiles: [], imports: [], sync: cursor, full: false, unchanged: true };
   }
 
-  const result = session.isAdmin
-    ? await env.DB.prepare('SELECT payload_json FROM work_orders WHERE change_revision > ?1 ORDER BY change_revision, id').bind(changeRevision).all()
-    : await env.DB.prepare('SELECT payload_json FROM work_orders WHERE change_revision > ?1 AND team = ?2 COLLATE NOCASE ORDER BY change_revision, id').bind(changeRevision, session.team).all();
+  let result;
+  if (session.isAdmin) {
+    result = await env.DB.prepare('SELECT payload_json FROM work_orders WHERE change_revision > ?1 ORDER BY change_revision, id').bind(changeRevision).all();
+  } else if (normalize(session.team)) {
+    result = await env.DB.prepare('SELECT payload_json FROM work_orders WHERE change_revision > ?1 AND team = ?2 COLLATE NOCASE ORDER BY change_revision, id').bind(changeRevision, session.team).all();
+  } else if (normalize(session.responsible)) {
+    result = await env.DB.prepare('SELECT payload_json FROM work_orders WHERE change_revision > ?1 AND responsible = ?2 COLLATE NOCASE ORDER BY change_revision, id').bind(changeRevision, session.responsible).all();
+  } else {
+    return { orders: [], profiles: [], imports: [], sync: cursor, full: false, unchanged: true };
+  }
   const orders = result.results.map((row) => JSON.parse(row.payload_json)).filter((order) => allowedOrder(session, order));
   return { orders, profiles: [], imports: [], sync: cursor, full: false, unchanged: orders.length === 0 };
 }
@@ -351,9 +376,10 @@ async function updateExecution(request, env, session) {
 async function photoResponse(request, env, session, protocol) {
   const photo = await env.DB.prepare('SELECT content_type, data_base64, team, responsible FROM photos WHERE protocol = ?1').bind(protocol).first();
   if (!photo) return new Response('Imagem não encontrada.', { status: 404 });
-  if (!session.isAdmin && (normalize(photo.team) !== normalize(session.team) ||
-    (session.responsible && normalize(photo.responsible) !== normalize(session.responsible)))) {
-    return new Response('Acesso negado.', { status: 403 });
+  if (!session.isAdmin) {
+    const record = await env.DB.prepare('SELECT payload_json FROM execution_records WHERE protocol = ?1').bind(protocol).first();
+    const order = record && JSON.parse(record.payload_json);
+    if (!order || !allowedOrder(session, order)) return new Response('Acesso negado.', { status: 403 });
   }
   const data = decodeBase64(photo.data_base64);
   return new Response(data, { headers: { 'content-type': photo.content_type, 'cache-control': 'private, max-age=300', 'x-content-type-options': 'nosniff' } });

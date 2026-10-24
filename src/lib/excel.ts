@@ -136,6 +136,15 @@ function normalizeHeader(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 }
 
+function canonicalCompany(value: string): string {
+  const normalized = normalizeHeader(value);
+  return normalized === 'NPER' ? 'NEOENERGIA' : normalized;
+}
+
+function companyLabel(value: string): string {
+  return canonicalCompany(value) === 'NEOENERGIA' ? 'Neoenergia' : value || 'Sem empresa';
+}
+
 function valueForHeader(header: string, order: Order): string | number {
   const key = normalizeHeader(header);
   if (key === 'ALIMENTADOR' || key === 'ALIM') return order.alimentador;
@@ -258,9 +267,14 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
   const XLSX = await import('xlsx');
   const workbook = XLSX.utils.book_new();
   const sourceColumns = [...new Set(orders.flatMap((order) => order.sourceColumns ?? []))];
-  const columns = [...controlColumns];
-  sourceColumns.forEach((header) => {
-    if (header && !columns.some((column) => normalizeHeader(column) === normalizeHeader(header))) columns.push(header);
+  const columns: string[] = [];
+  const seenColumns = new Set<string>();
+  [...sourceColumns, ...controlColumns].forEach((header) => {
+    const key = normalizeHeader(header);
+    if (key && !seenColumns.has(key)) {
+      seenColumns.add(key);
+      columns.push(header);
+    }
   });
 
   const masterRows: unknown[][] = [columns];
@@ -374,33 +388,47 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
 
   const responsibleGroups = [...new Map(orders
     .filter((order) => order.responsavel.trim())
-    .map((order) => [`${order.empresa}\u0000${order.responsavel}`, { company: order.empresa || 'Sem empresa', responsible: order.responsavel }])).values()]
+    .map((order) => {
+      const companyKey = canonicalCompany(order.empresa || 'Sem empresa');
+      const responsibleKey = normalizeHeader(order.responsavel);
+      return [`${companyKey}\u0000${responsibleKey}`, { companyKey, company: companyLabel(order.empresa), responsible: order.responsavel }];
+    })).values()]
     .sort((a, b) => `${a.company} ${a.responsible}`.localeCompare(`${b.company} ${b.responsible}`, 'pt-BR'));
   const responsibleRows: unknown[][] = [['EMPRESA', 'RESPONSÁVEL', 'ORDENS', 'EXECUTADAS', 'IMPEDIMENTOS', 'PENDENTES', '% EXECUÇÃO', 'QTD. AJUSTADA', 'QTD EXECUTADA', 'QTD CONSIDERADA']];
   responsibleGroups.forEach(({ company, responsible }) => responsibleRows.push([company, responsible, '', '', '', '', '', '', '', '']));
   const byResponsible = formulaSheet(XLSX, responsibleRows, [25, 28, 13, 14, 16, 13, 15, 17, 17, 19]);
   const companyColumn = columns.findIndex((header) => normalizeHeader(header) === 'EMPRESA');
   const responsibleColumn = columns.findIndex((header) => normalizeHeader(header) === 'RESPONSAVEL');
-  responsibleGroups.forEach(({ company, responsible }, index) => {
+  responsibleGroups.forEach(({ companyKey, responsible }, index) => {
     const rowNumber = index + 2;
     const groupRange = (column: number) => `ACOMPANHAMENTO!$${columnName(column)}$2:$${columnName(column)}$${lastRow}`;
     const companyRange = groupRange(companyColumn);
     const responsibleRange = groupRange(responsibleColumn);
-    const companyCriteria = `$A${rowNumber}`;
     const responsibleCriteria = `$B${rowNumber}`;
-    const groupOrders = orders.filter((order) => (order.empresa || 'Sem empresa') === company && order.responsavel === responsible);
+    const groupOrders = orders.filter((order) => canonicalCompany(order.empresa || 'Sem empresa') === companyKey && normalizeHeader(order.responsavel) === normalizeHeader(responsible));
+    const sourceCompanies = [...new Map(groupOrders.map((order) => {
+      const company = order.empresa || 'Sem empresa';
+      return [normalizeHeader(company), company];
+    })).values()];
+    const companyCriteriaTerms = sourceCompanies.map((value) => `"${value.replace(/"/g, '""')}"`);
+    const countFormula = (status?: OrderStatus) => companyCriteriaTerms.map((companyValue) =>
+      `COUNTIFS(${companyRange},${companyValue},${responsibleRange},${responsibleCriteria}${status ? `,${statusRange},"${statusLabel(status)}"` : ''})`,
+    ).join('+');
+    const sumFormula = (sumRange: string) => companyCriteriaTerms.map((companyValue) =>
+      `SUMIFS(${sumRange},${companyRange},${companyValue},${responsibleRange},${responsibleCriteria})`,
+    ).join('+');
     const countStatus = (status: OrderStatus) => groupOrders.filter((order) => order.status === status).length;
     const groupPlanned = groupOrders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
     const groupReported = groupOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
     const groupConsidered = groupOrders.reduce((sum, order) => sum + (order.status === 'executada' ? order.qtdExecutada ?? 0 : 0), 0);
-    formulaCell(byResponsible, `C${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria})`, groupOrders.length);
-    formulaCell(byResponsible, `D${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria},${statusRange},"Executada")`, countStatus('executada'));
-    formulaCell(byResponsible, `E${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria},${statusRange},"Impedimento")`, countStatus('impedimento'));
-    formulaCell(byResponsible, `F${rowNumber}`, `COUNTIFS(${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria},${statusRange},"Pendente")`, countStatus('pendente'));
+    formulaCell(byResponsible, `C${rowNumber}`, countFormula(), groupOrders.length);
+    formulaCell(byResponsible, `D${rowNumber}`, countFormula('executada'), countStatus('executada'));
+    formulaCell(byResponsible, `E${rowNumber}`, countFormula('impedimento'), countStatus('impedimento'));
+    formulaCell(byResponsible, `F${rowNumber}`, countFormula('pendente'), countStatus('pendente'));
     formulaCell(byResponsible, `G${rowNumber}`, `IF(C${rowNumber}=0,0,D${rowNumber}/C${rowNumber})`, groupOrders.length ? countStatus('executada') / groupOrders.length : 0, '0%');
-    formulaCell(byResponsible, `H${rowNumber}`, `SUMIFS(${adjustedRange},${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria})`, groupPlanned, '0.##');
-    formulaCell(byResponsible, `I${rowNumber}`, `SUMIFS(${executedRange},${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria})`, groupReported, '0.##');
-    formulaCell(byResponsible, `J${rowNumber}`, `SUMIFS(${consideredRange},${companyRange},${companyCriteria},${responsibleRange},${responsibleCriteria})`, groupConsidered, '0.##');
+    formulaCell(byResponsible, `H${rowNumber}`, sumFormula(adjustedRange), groupPlanned, '0.##');
+    formulaCell(byResponsible, `I${rowNumber}`, sumFormula(executedRange), groupReported, '0.##');
+    formulaCell(byResponsible, `J${rowNumber}`, sumFormula(consideredRange), groupConsidered, '0.##');
   });
   setFilter(byResponsible, responsibleRows.length, responsibleRows[0].length);
   XLSX.utils.book_append_sheet(workbook, byResponsible, 'POR RESPONSÁVEL');

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
-import { teamOptions } from './data/sample-data';
 import { apiRequest, readSharedState } from './data/api';
 import type { SharedAppState, SyncCursor } from './data/api';
 import { exportControlWorkbook, mapSpreadsheetRow, readWorkbook, rowsFromSheet } from './lib/excel';
@@ -8,9 +7,9 @@ import type { ParsedWorkbook } from './lib/excel';
 import type { AccessProfile, AdminPage, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
 
 const kindLabels: Record<ProfileKind, string> = {
-  inspetor: 'Inspetor',
+  inspetor: 'Neoenergia',
   vencer: 'Vencer',
-  nper: 'NPER',
+  nper: 'Neoenergia',
   neoenergia: 'Neoenergia',
 };
 
@@ -27,37 +26,48 @@ function normalize(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
+function normalizeHeader(value: string): string {
+  return normalize(value).replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function canonicalCompany(value: string): string {
+  const company = normalize(value);
+  return company === 'nper' ? 'neoenergia' : company;
+}
+
+function companyLabel(value: string): string {
+  return canonicalCompany(value) === 'neoenergia' ? 'Neoenergia' : value;
+}
+
+function canonicalProfileKind(value: string): 'neoenergia' | 'vencer' {
+  return normalize(value) === 'vencer' ? 'vencer' : 'neoenergia';
+}
+
+function isCancelOrderValue(value: string): boolean {
+  return /^cancelar\s+(?:a\s+)?ordem$/.test(normalize(value));
+}
+
 function parseQuantity(value: string): number {
   const match = value.replace(',', '.').match(/-?\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : 0;
 }
 
-type ImportSource = 'controle' | 'inspecao' | 'nper' | 'vencer';
 type AdminSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
-function chooseImportSheet(workbook: ParsedWorkbook['workbook'], source: ImportSource): string {
-  const preferredNames: Record<ImportSource, string[]> = {
-    controle: ['acompanhamento'],
-    inspecao: ['export'],
-    nper: ['lv propria', 'planilha1', 'planilha2', 'planilha3'],
-    vencer: ['cart out', 'planilha1', 'planilha2'],
-  };
-  const normalizedSheetName = (name: string) => normalize(name).replace(/[^a-z0-9]+/g, ' ').trim();
-  const scoreSheet = (name: string) => {
-    const headers = Object.keys(rowsFromSheet(workbook, name)[0]?.values ?? {})
-      .map((header) => normalizedSheetName(header));
-    const hasOrder = headers.some((header) => ['os', 'ordem', 'num consequencia', 'numero da ordem'].includes(header));
-    const hasQuantity = headers.some((header) => /^(qtd|quant|quantidade|km plano)( |$)/.test(header));
-    const hasService = headers.some((header) => ['defeito', 'tipo emr', 'servico', 'descricao'].includes(header));
-    return { name, score: Number(hasOrder) * 4 + Number(hasQuantity) * 2 + Number(hasService), usable: hasOrder && (hasQuantity || hasService) };
-  };
-  for (const preferred of preferredNames[source]) {
-    const match = workbook.SheetNames.find((name) => normalizedSheetName(name) === preferred);
-    if (match && scoreSheet(match).usable) return match;
-  }
+function isPortfolioSheet(workbook: ParsedWorkbook['workbook'], sheetName: string): boolean {
+  const headers = Object.keys(rowsFromSheet(workbook, sheetName)[0]?.values ?? {}).map(normalizeHeader);
+  const hasOrder = headers.includes('num consequencia') || headers.includes('ordem') || headers.includes('os');
+  return hasOrder && headers.includes('empresa') && headers.includes('equipe') && headers.includes('responsavel');
+}
 
-  const ranked = workbook.SheetNames.map(scoreSheet).sort((a, b) => b.score - a.score);
-  return ranked[0]?.score ? ranked[0].name : workbook.SheetNames[0] || '';
+function portfolioSheets(workbook: ParsedWorkbook['workbook']): string[] {
+  return workbook.SheetNames.filter((name) => isPortfolioSheet(workbook, name));
+}
+
+function chooseImportSheet(workbook: ParsedWorkbook['workbook']): string {
+  const sheets = portfolioSheets(workbook);
+  const masterSheet = sheets.find((name) => normalize(name) === 'acompanhamento');
+  return masterSheet || (sheets.length === 1 ? sheets[0] : '');
 }
 
 function quantityUnit(value: string): string {
@@ -290,7 +300,7 @@ function LoginScreen({
       <section className="login-card">
         <div className="login-brand-panel"><Brand /></div>
         <h1>Acesso da equipe</h1>
-        <p className="login-intro">Informe o código e a senha fornecidos pelo supervisor. O código identifica sua equipe e sua carteira.</p>
+        <p className="login-intro">Informe o código e a senha fornecidos pelo supervisor. O acesso abre apenas as ordens do responsável vinculado.</p>
 
         <form onSubmit={handleSubmit} className="login-form">
           <label className="field-group">
@@ -389,9 +399,13 @@ function FieldApp({
   }, [hasUnsavedDraft]);
 
   const assignedOrders = useMemo(() => orders.filter((order) => {
-    const matchesTeam = normalize(order.equipe) === normalize(session.team);
-    const matchesResponsible = !session.responsible || normalize(order.responsavel) === normalize(session.responsible);
-    return matchesTeam && matchesResponsible;
+    const kind = canonicalProfileKind(session.kind);
+    const matchesCompany = canonicalCompany(order.empresa) === kind;
+    const matchesTeam = !session.team || normalize(order.equipe) === normalize(session.team);
+    const matchesResponsible = session.responsible
+      ? normalize(order.responsavel) === normalize(session.responsible)
+      : Boolean(session.team);
+    return matchesCompany && matchesTeam && matchesResponsible;
   }), [orders, session]);
 
   const filteredOrders = useMemo(() => assignedOrders.filter((order) => {
@@ -425,7 +439,7 @@ function FieldApp({
     const file = event.target.files?.[0];
     if (!file) return;
     if (file.size > 1200 * 1024) {
-      setError('A imagem deve ter até 1,2 MB nesta demonstração.');
+      setError('A imagem deve ter até 1,2 MB.');
       event.target.value = '';
       return;
     }
@@ -512,7 +526,7 @@ function FieldApp({
     return (
       <main className="field-page">
         <div className="field-shell">
-          <div className="field-header"><Brand /><span className="team-chip">{session.team}</span></div>
+          <div className="field-header"><Brand /><span className="team-chip">{session.team || session.responsible || kindLabels[session.kind]}</span></div>
           <button className="back-link" onClick={leaveExecutionForm}>← Voltar às ordens</button>
           <h1>{executionMode === 'impedimento' ? 'Registrar impedimento' : 'Registrar execução'}</h1>
           <OrderSummary order={selectedOrder} />
@@ -575,7 +589,7 @@ function FieldApp({
   return (
     <main className="field-page">
       <div className="field-shell field-list-shell">
-        <div className="field-header"><Brand /><span className="team-chip">{session.team}</span></div>
+        <div className="field-header"><Brand /><span className="team-chip">{session.team || session.responsible || kindLabels[session.kind]}</span></div>
         <div className="field-identity">
           <div><span className="eyebrow">Acesso da equipe</span><strong>{session.operatorName}</strong></div>
           <button className="text-button logout-button" onClick={onLogout}>Sair</button>
@@ -616,7 +630,7 @@ function FieldApp({
               )}
               <details className="order-extra-details">
                 <summary>Ver detalhes</summary>
-                <div><Detail label="Barramento" value={order.barramento || '—'} /><Detail label="Empresa" value={order.empresa || '—'} /><Detail label="Equipe" value={order.equipe} /><Detail label="Avanço" value={order.avanco || '—'} /><Detail label="Responsável" value={order.responsavel || '—'} /></div>
+                <div><Detail label="Barramento" value={order.barramento || '—'} /><Detail label="Empresa" value={companyLabel(order.empresa) || '—'} /><Detail label="Equipe" value={order.equipe} /><Detail label="Avanço" value={order.avanco || '—'} /><Detail label="Responsável" value={order.responsavel || '—'} /></div>
               </details>
             </article>
           ))}
@@ -695,8 +709,10 @@ function AdminApp({
   function exportCurrent() {
     void exportControlWorkbook(filteredOrders, 'controle-execucao-neoenergia.xlsx');
   }
-  const availableTeams = [...new Set([...teamOptions, ...orders.map((order) => order.equipe), ...profiles.map((profile) => profile.team)].filter(Boolean))];
-
+  function exportPortfolio(): Promise<void> {
+    const date = new Date().toISOString().slice(0, 10);
+    return exportControlWorkbook(orders, `carteira-completa-neoenergia-${date}.xlsx`);
+  }
   return (
     <div className="admin-shell">
       <aside className={'admin-sidebar' + (navOpen ? ' open' : '')} id="admin-navigation" aria-label="Menu administrativo">
@@ -740,7 +756,7 @@ function AdminApp({
               {saveStatus === 'saving' ? 'Salvando…' : saveStatus === 'saved' ? 'Salvo no servidor' : saveStatus === 'error' ? 'Falha ao salvar' : 'Conectado'}
             </span>
             {saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}
-            <button className="button button-primary export-button" onClick={exportCurrent}>Exportar Excel</button>
+            <button className="button button-primary export-button" onClick={() => { void exportPortfolio(); }}>Exportar carteira</button>
           </div>
         </header>
 
@@ -760,9 +776,9 @@ function AdminApp({
             onExport={exportCurrent}
           />
         )}
-        {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} teamChoices={availableTeams} />}
+        {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} onExportPortfolio={exportPortfolio} />}
         {page === 'protocolos' && <ProtocolsPage orders={orders} />}
-        {page === 'acessos' && <AccessPage profiles={profiles} setProfiles={setProfiles} teamChoices={availableTeams} saveStatus={saveStatus} onRetrySave={onRetrySave} created={createdProfile} setCreated={setCreatedProfile} />}
+        {page === 'acessos' && <AccessPage orders={orders} profiles={profiles} setProfiles={setProfiles} saveStatus={saveStatus} onRetrySave={onRetrySave} created={createdProfile} setCreated={setCreatedProfile} />}
       </div>
     </div>
   );
@@ -785,20 +801,19 @@ function Dashboard({
 }) {
   const executed = orders.filter((order) => order.status === 'executada').length;
   const impediments = orders.filter((order) => order.status === 'impedimento').length;
-  const teams = [...new Set(orders.map((order) => order.equipe).filter(Boolean))];
+  const teams = [...new Set(orders.map((order) => order.equipe).filter((team) => Boolean(team) && !isCancelOrderValue(team)))];
   const teamStats = teams.map((team) => {
     const assigned = orders.filter((order) => order.equipe === team);
     const complete = assigned.filter((order) => order.status === 'executada').length;
     return { label: team, complete, total: assigned.length, percent: assigned.length ? Math.round(complete / assigned.length * 100) : 0 };
   });
-  const contractorGroups = [...new Set(orders
-    .filter((order) => order.responsavel && (normalize(order.empresa).includes('vencer') || normalize(order.empresa).includes('nper')))
-    .map((order) => order.empresa + ' • ' + order.responsavel))];
-  const contractorStats = contractorGroups.map((group) => {
-      const [company, name] = group.split(' • ');
-      const assigned = orders.filter((order) => order.empresa === company && order.responsavel === name);
+  const contractorGroups = [...new Map(orders
+    .filter((order) => order.responsavel && !isCancelOrderValue(order.responsavel) && ['vencer', 'neoenergia'].includes(canonicalCompany(order.empresa)))
+    .map((order) => [`${canonicalCompany(order.empresa)}\u0000${order.responsavel}`, { company: canonicalCompany(order.empresa), responsible: order.responsavel }])).values()];
+  const contractorStats = contractorGroups.map(({ company, responsible }) => {
+      const assigned = orders.filter((order) => canonicalCompany(order.empresa) === company && normalize(order.responsavel) === normalize(responsible));
       const complete = assigned.filter((order) => order.status === 'executada').length;
-      return { label: company + ' • ' + name, complete, total: assigned.length, percent: assigned.length ? Math.round(complete / assigned.length * 100) : 0 };
+      return { label: companyLabel(company) + ' • ' + responsible, complete, total: assigned.length, percent: assigned.length ? Math.round(complete / assigned.length * 100) : 0 };
     });
 
   function quickFilter(status: string) {
@@ -812,20 +827,20 @@ function Dashboard({
   return (
     <main className="admin-content">
       <section className="stats-grid">
-        <StatCard title="Ordens importadas" value={orders.length.toLocaleString('pt-BR')} detail="base demonstrativa" />
+        <StatCard title="Ordens importadas" value={orders.length.toLocaleString('pt-BR')} detail="na carteira ativa" />
         <StatCard title="Executadas" value={executed.toLocaleString('pt-BR')} detail="no período selecionado" tone="success" onClick={() => quickFilter('executada')} />
         <StatCard title="Impedimentos" value={impediments.toLocaleString('pt-BR')} detail="para análise interna" tone="warning" onClick={() => quickFilter('impedimento')} />
         <StatCard title="Equipes ativas" value={teams.length.toLocaleString('pt-BR')} detail="com ordens liberadas" />
       </section>
 
       <section className="panel consolidated-panel">
-        <div className="panel-heading"><h2>Efetivação dos serviços</h2><span className="demo-tag">Dados demonstrativos</span></div>
+        <div className="panel-heading"><h2>Efetivação dos serviços</h2><span className="demo-tag">Carteira ativa</span></div>
         <div className="filter-row">
           <label className="search-field admin-search"><span>⌕</span><input placeholder="Buscar OS, equipe ou protocolo" onChange={(event) => { setSearch(event.target.value); setPage('ordens'); }} /></label>
           <select aria-label="Filtrar equipe" onChange={(event) => { setTeamFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team}>{team}</option>)}</select>
-          <select aria-label="Filtrar serviço" onChange={(event) => { setServiceFilter(event.target.value); setPage('ordens'); }}><option value="">Todos os serviços</option>{[...new Set(orders.map((order) => order.servico).filter(Boolean))].map((service) => <option key={service}>{service}</option>)}</select>
+          <select aria-label="Filtrar serviço" onChange={(event) => { setServiceFilter(event.target.value); setPage('ordens'); }}><option value="">Todos os serviços</option>{[...new Set(orders.map((order) => order.servico).filter((service) => Boolean(service) && !isCancelOrderValue(service)))].map((service) => <option key={service}>{service}</option>)}</select>
           <select aria-label="Filtrar situação" onChange={(event) => { setStatusFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as situações</option><option value="pendente">Pendente</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
-          <span className="period-chip compact-period">Base demonstrativa</span>
+          <span className="period-chip compact-period">Carteira atual</span>
         </div>
         <OrderTable orders={orders.slice(0, 6)} />
         <p className="table-note">O consolidado usa a quantidade realizada informada pela equipe e mantém a prevista para comparação.</p>
@@ -838,7 +853,7 @@ function Dashboard({
         </div>
         {contractorStats.length > 0 && (
           <div className="responsible-progress">
-            <div className="panel-heading compact-heading"><h3>Efetivação por responsável • Vencer e NPER</h3></div>
+            <div className="panel-heading compact-heading"><h3>Efetivação por responsável • Vencer e Neoenergia</h3></div>
             <div className="progress-grid">{contractorStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}</div>
           </div>
         )}
@@ -858,7 +873,7 @@ function ControlPage({ orders }: { orders: Order[] }) {
     ? `conic-gradient(#00a859 0 ${executedPercent}%, #e6a13b ${executedPercent}% ${impedimentEnd}%, #dce6e9 ${impedimentEnd}% 100%)`
     : '#dce6e9';
 
-  const teams = [...new Set(orders.map((order) => order.equipe.trim() || 'Sem equipe'))];
+  const teams = [...new Set(orders.map((order) => order.equipe.trim() || 'Sem equipe'))].filter((team) => !isCancelOrderValue(team));
   const teamStats = teams.map((team) => {
     const assigned = orders.filter((order) => (order.equipe.trim() || 'Sem equipe') === team);
     const complete = assigned.filter((order) => order.status === 'executada').length;
@@ -868,9 +883,9 @@ function ControlPage({ orders }: { orders: Order[] }) {
   const responsibleGroups = new Map<string, { label: string; orders: Order[] }>();
   orders.forEach((order) => {
     const responsible = order.responsavel.trim();
-    if (!responsible) return;
-    const company = order.empresa.trim();
-    const key = company + '\u0000' + responsible;
+    if (!responsible || isCancelOrderValue(responsible)) return;
+    const company = companyLabel(order.empresa.trim());
+    const key = canonicalCompany(company) + '\u0000' + normalize(responsible);
     const existing = responsibleGroups.get(key);
     if (existing) existing.orders.push(order);
     else responsibleGroups.set(key, { label: company ? company + ' • ' + responsible : responsible, orders: [order] });
@@ -1028,7 +1043,7 @@ function OrdersPage({
   setServiceFilter: (value: string) => void;
   onExport: () => void;
 }) {
-  const teams = [...new Set(orders.map((order) => order.equipe).filter(Boolean))];
+  const teams = [...new Set(orders.map((order) => order.equipe).filter((team) => Boolean(team) && !isCancelOrderValue(team)))];
   return (
     <main className="admin-content">
       <section className="panel orders-panel">
@@ -1036,7 +1051,7 @@ function OrdersPage({
         <div className="filter-row orders-filter-row">
           <label className="search-field admin-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OS, equipe, responsável ou protocolo" /></label>
           <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team}>{team}</option>)}</select>
-          <select value={serviceFilter} onChange={(event) => setServiceFilter(event.target.value)}><option value="">Todos os serviços</option>{[...new Set(orders.map((order) => order.servico).filter(Boolean))].map((service) => <option key={service}>{service}</option>)}</select>
+          <select value={serviceFilter} onChange={(event) => setServiceFilter(event.target.value)}><option value="">Todos os serviços</option>{[...new Set(orders.map((order) => order.servico).filter((service) => Boolean(service) && !isCancelOrderValue(service)))].map((service) => <option key={service}>{service}</option>)}</select>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todas as situações</option><option value="pendente">Pendente</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
         </div>
         <OrderTable orders={orders} />
@@ -1050,25 +1065,27 @@ function ImportPage({
   setOrders,
   imports,
   setImports,
-  teamChoices,
+  onExportPortfolio,
 }: {
   orders: Order[];
   setOrders: (orders: Order[]) => void;
   imports: ImportRecord[];
   setImports: (imports: ImportRecord[]) => void;
-  teamChoices: string[];
+  onExportPortfolio: () => Promise<void>;
 }) {
-  const [source, setSource] = useState<'controle' | 'inspecao' | 'nper' | 'vencer'>('controle');
-  const [team, setTeam] = useState('');
   const [file, setFile] = useState<ParsedWorkbook | null>(null);
   const [sheetName, setSheetName] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [auditExported, setAuditExported] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const rows = useMemo(() => file && sheetName ? rowsFromSheet(file.workbook, sheetName) : [], [file, sheetName]);
-  const mappedPreview = useMemo(() => rows.slice(0, 4).map((row) => {
-    const mapped = mapSpreadsheetRow(row, team);
-    return { ...mapped, equipe: source === 'controle' ? (mapped.equipe || team) : team };
-  }), [rows, team, source]);
+  const orderRows = useMemo(() => rows.map((row) => mapSpreadsheetRow(row, ''))
+    .filter((row) => row.numConsequencia.trim()), [rows]);
+  const validRows = useMemo(() => orderRows.filter((row) =>
+    Boolean(row.empresa.trim() && row.responsavel.trim() && row.equipe.trim())), [orderRows]);
+  const excludedRows = orderRows.length - validRows.length;
+  const mappedPreview = validRows.slice(0, 4);
   const columns = rows[0] ? Object.keys(rows[0].values) : [];
 
   async function onFile(event: ChangeEvent<HTMLInputElement>) {
@@ -1076,87 +1093,100 @@ function ImportPage({
     if (!selectedFile) return;
     setError('');
     setMessage('');
+    setAuditExported(false);
     try {
       const workbook = await readWorkbook(selectedFile);
+      const selectedSheet = chooseImportSheet(workbook.workbook);
+      if (!selectedSheet) {
+        setFile(null);
+        setSheetName('');
+        setError('Não consegui identificar a carteira geral. Use a aba ACOMPANHAMENTO ou um arquivo com uma única aba de ordens, contendo número da ordem, EMPRESA, EQUIPE e RESPONSÁVEL.');
+        return;
+      }
       setFile(workbook);
-      setSheetName(chooseImportSheet(workbook.workbook, source));
+      setSheetName(selectedSheet);
     } catch {
       setError('Não consegui ler essa planilha. Selecione um arquivo .xlsx válido.');
       setFile(null);
     }
   }
 
+  async function exportCurrentPortfolio() {
+    if (orders.length === 0) {
+      setError('Ainda não há uma carteira carregada para exportar.');
+      return;
+    }
+    setExporting(true);
+    setError('');
+    try {
+      await onExportPortfolio();
+      setAuditExported(true);
+      setMessage('Carteira completa exportada para auditoria. Agora você pode importar a próxima carteira.');
+    } catch {
+      setError('Não consegui exportar a carteira. Tente novamente antes de substituir os dados do mês.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   function importRows() {
-    if (!file || rows.length === 0) {
-      setError('Selecione um arquivo e uma aba com ordens.');
+    if (!file || rows.length === 0 || !sheetName) {
+      setError('Selecione a planilha da carteira geral.');
       return;
     }
-    const isMaster = source === 'controle' || normalize(sheetName) === 'acompanhamento';
-    const isInspection = source === 'inspecao';
-    const mappedRows = rows.map((row) => mapSpreadsheetRow(row, team)).filter((row) => row.numConsequencia);
-    if (mappedRows.length === 0) {
-      setError('Não encontrei uma coluna de identificação da ordem. Confira se a aba tem NUM_CONSEQUENCIA, ORDEM ou OS.');
+    if (validRows.length === 0) {
+      setError('Não encontrei ordens com EMPRESA, EQUIPE e RESPONSÁVEL preenchidos.');
       return;
     }
-    if (!team.trim() && (!isMaster || mappedRows.some((row) => !row.equipe.trim()))) {
-      setError(isMaster ? 'Informe uma equipe padrão para as linhas sem equipe.' : 'Informe a equipe que receberá esta carteira.');
+    if (orders.length > 0 && !auditExported) {
+      setError('Exporte a carteira completa para auditoria antes de substituir a carteira ativa.');
       return;
     }
-    const nextOrders = source === 'controle'
-      ? orders.filter((order) => !order.id.startsWith('order-'))
-      : [...orders];
-    mappedRows.forEach((mapped, index) => {
-      const existingIndex = nextOrders.findIndex((order) =>
-        order.numConsequencia === mapped.numConsequencia &&
-        (isInspection ? order.sourceKind === 'inspecao' : order.sourceKind !== 'inspecao'),
-      );
-      if (existingIndex >= 0) {
-        const existing = nextOrders[existingIndex];
-        const merged: Order = {
-          ...existing,
-          alimentador: mapped.alimentador || existing.alimentador,
-          barramento: mapped.barramento || existing.barramento,
-          qtdAjustada: mapped.qtdAjustada || existing.qtdAjustada,
-          numConsequencia: mapped.numConsequencia,
-          empresa: mapped.empresa || existing.empresa,
-          equipe: isMaster ? (mapped.equipe || existing.equipe) : team,
-          servico: mapped.servico || existing.servico,
-          avanco: mapped.avanco || existing.avanco,
-          responsavel: mapped.responsavel || existing.responsavel,
-          endereco: mapped.endereco || existing.endereco,
-          original: { ...(existing.original || {}), ...(mapped.original || {}) },
-          sourceColumns: isMaster ? columns : existing.sourceColumns?.length ? existing.sourceColumns : columns,
-          sourceSheet: isMaster ? sheetName : existing.sourceSheet || sheetName,
-          sourceFile: isMaster ? file.fileName : existing.sourceFile || file.fileName,
-          sourceKind: isMaster ? 'controle' : isInspection ? 'inspecao' : existing.sourceKind || source,
-        };
-        nextOrders[existingIndex] = merged;
-      } else {
-        nextOrders.push({
-          ...mapped,
-          id: 'import-' + Date.now() + '-' + index,
-          equipe: isMaster ? (mapped.equipe || team) : team,
-          status: 'pendente',
-          sourceColumns: columns,
-          sourceSheet: sheetName,
-          sourceFile: file.fileName,
-          sourceKind: isMaster ? 'controle' : source,
-        });
-      }
+    if (orders.length > 0 && !window.confirm(`A nova carteira vai substituir as ${orders.length.toLocaleString('pt-BR')} ordens ativas. A carteira atual já foi exportada para auditoria. Deseja continuar?`)) return;
+
+    const orderKey = (order: Pick<Order, 'numConsequencia' | 'empresa' | 'responsavel'>) =>
+      [normalize(order.numConsequencia), canonicalCompany(order.empresa), normalize(order.responsavel)].join('|');
+    const scheduledMonth = (order: Pick<Order, 'original'>) => {
+      const entry = Object.entries(order.original || {}).find(([header]) => normalizeHeader(header) === 'mes programado');
+      return normalize(String(entry?.[1] || ''));
+    };
+    const previousByKey = new Map(orders.map((order) => [orderKey(order), order]));
+    const importedAt = new Date().toISOString();
+    const nextOrders: Order[] = validRows.map((mapped, index) => {
+      const previous = previousByKey.get(orderKey(mapped));
+      const samePortfolioMonth = Boolean(previous && scheduledMonth(previous) && scheduledMonth(previous) === scheduledMonth(mapped));
+      return {
+        ...mapped,
+        id: samePortfolioMonth && previous ? previous.id : `import-${Date.now()}-${index}`,
+        status: samePortfolioMonth && previous ? previous.status : 'pendente',
+        ...(samePortfolioMonth && previous ? {
+          qtdExecutada: previous.qtdExecutada,
+          observacao: previous.observacao,
+          motivoImpedimento: previous.motivoImpedimento,
+          foto: previous.foto,
+          protocolo: previous.protocolo,
+          registradoPor: previous.registradoPor,
+          dataRegistro: previous.dataRegistro,
+        } : {}),
+        sourceColumns: columns,
+        sourceSheet: sheetName,
+        sourceFile: file.fileName,
+        sourceKind: 'controle',
+      };
     });
     setOrders(nextOrders);
-    const sourceLabel = source === 'controle' ? 'CONTROLE • Geral' : source === 'inspecao' ? 'INSPETOR' : source === 'nper' ? 'NPER' : 'VENCER';
     const record: ImportRecord = {
       id: 'import-' + Date.now(),
       fileName: file.fileName,
-      source: sourceLabel,
-      team: isMaster ? 'Carteira geral' : team,
-      importedAt: new Date().toISOString(),
-      orderCount: mappedRows.length,
+      source: 'Carteira geral',
+      team: 'Carteira geral',
+      importedAt,
+      orderCount: nextOrders.length,
       sheetName,
     };
     setImports([record, ...imports.filter((item) => !item.id.startsWith('import-demo'))]);
-    setMessage(mappedRows.length + ' ordens lidas. Nenhuma planilha enviada anteriormente foi carregada automaticamente.');
+    setAuditExported(false);
+    setMessage(`${nextOrders.length.toLocaleString('pt-BR')} ordens importadas da carteira geral.${excludedRows ? ` ${excludedRows} linha(s) com EMPRESA, EQUIPE ou RESPONSÁVEL vazios foram ignoradas.` : ''}`);
     setError('');
   }
 
@@ -1164,29 +1194,20 @@ function ImportPage({
     <main className="admin-content">
       <div className="import-layout">
         <section className="panel import-form-panel">
-          <div className="panel-heading"><h2>1. Selecione a fonte e a equipe</h2><span className="step-chip">Somente supervisor</span></div>
-          <label className="field-group admin-field"><span>Planilha de origem</span>
-            <select value={source} onChange={(event) => setSource(event.target.value as typeof source)}>
-              <option value="controle">CONTROLE • carteira geral</option><option value="inspecao">INSPETOR</option><option value="nper">NPER</option><option value="vencer">VENCER</option>
-            </select>
-          </label>
-          <label className="field-group admin-field"><span>{source === 'controle' ? 'Equipe para linhas sem equipe' : 'Equipe que receberá esta carteira'}</span>
-            <input list="import-team-choices" value={team} onChange={(event) => setTeam(event.target.value)} placeholder="Digite ou selecione uma equipe" />
-            <datalist id="import-team-choices">{teamChoices.map((option) => <option key={option} value={option} />)}</datalist>
-          </label>
+          <div className="panel-heading"><div><h2>Importar carteira geral</h2><p className="muted">Uma planilha distribui as ordens pelos perfis.</p></div><span className="step-chip">Somente supervisor</span></div>
+          {orders.length > 0 && <div className="security-note"><strong>Troca mensal com cópia de auditoria</strong><span>Exporte a carteira completa antes de carregar a nova. A importação substituirá as ordens ativas.</span><button type="button" className="button button-secondary" disabled={exporting} onClick={() => { void exportCurrentPortfolio(); }}>{exporting ? 'Exportando…' : 'Exportar carteira completa'}</button>{auditExported && <span className="success-text">Cópia exportada nesta sessão.</span>}</div>}
           <label className="upload-dropzone">
             <span className="file-icon">XLSX</span>
-            <span><strong>Arraste a planilha ou escolha um arquivo</strong><small>Arquivo Excel .xlsx • os dados só entram após validação</small></span>
+            <span><strong>Selecione a carteira geral do mês</strong><small>As abas de apresentação e resumo não serão importadas.</small></span>
             <span className="button button-secondary file-button">Selecionar arquivo</span>
             <input type="file" accept=".xlsx,.xls" onChange={onFile} />
           </label>
           {file && (
             <>
-              <div className="file-selected"><div><strong>{file.fileName}</strong><small>{rows.length} linhas · {columns.length} colunas</small></div>
-                {file.sheetNames.length > 1 && <select aria-label="Aba da planilha" value={sheetName} onChange={(event) => setSheetName(event.target.value)}>{file.sheetNames.map((name) => <option key={name}>{name}</option>)}</select>}
-                {file.sheetNames.length === 1 && <span>{sheetName}</span>}
+              <div className="file-selected"><div><strong>{file.fileName}</strong><small>{validRows.length.toLocaleString('pt-BR')} ordens válidas · {columns.length} colunas{excludedRows ? ` · ${excludedRows} linha(s) serão ignoradas` : ''}</small></div>
+                <span>{sheetName}</span>
               </div>
-              <div className="import-actions"><span>Prévia disponível · confira a identificação e as atribuições.</span><button className="button button-primary" onClick={importRows}>Validar e importar</button></div>
+              <div className="import-actions"><span>Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não serão incluídas.</span><button className="button button-primary" onClick={importRows}>Validar e importar carteira</button></div>
             </>
           )}
           {message && <div className="inline-success">{message}</div>}
@@ -1194,7 +1215,7 @@ function ImportPage({
         </section>
 
         <section className="panel import-history-panel">
-          <div className="panel-heading"><div><h2>Importações recentes</h2><p className="muted">Histórico demonstrativo neste navegador</p></div></div>
+          <div className="panel-heading"><div><h2>Importações recentes</h2><p className="muted">Registro das carteiras carregadas</p></div></div>
           <div className="import-history-list">
             {imports.slice(0, 4).map((item) => (
               <article className="import-history-item" key={item.id}>
@@ -1202,16 +1223,16 @@ function ImportPage({
               </article>
             ))}
           </div>
-          <div className="mapping-note"><strong>Relacionamento das carteiras</strong><span>NPER e VENCER podem ser relacionados ao CONTROLE pela coluna ORDEM / NUM_CONSEQUENCIA. Inspetor usa OS como identificador próprio.</span></div>
+          <div className="mapping-note"><strong>Filtro de linhas incompletas</strong><span>Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não entram na carteira para evitar divergência nos acessos.</span></div>
         </section>
       </div>
 
       <section className="panel preview-panel">
-        <div className="panel-heading"><div><h2>Prévia das ordens identificadas</h2><p className="muted">Apenas prévia local antes da importação.</p></div><span className="demo-tag">{rows.length ? rows.length + ' linhas no arquivo' : 'Sem arquivo selecionado'}</span></div>
+        <div className="panel-heading"><div><h2>Prévia das ordens válidas</h2><p className="muted">Conferência antes de substituir a carteira ativa.</p></div><span className="demo-tag">{validRows.length ? validRows.length.toLocaleString('pt-BR') + ' ordens' : 'Sem arquivo selecionado'}</span></div>
         <div className="table-scroll"><table className="admin-table preview-table"><thead><tr><th>Ordem</th><th>Equipe</th><th>Serviço</th><th>Qtd. ajustada</th><th>Responsável</th></tr></thead>
-          <tbody>{mappedPreview.map((row, index) => <tr key={index}><td>{row.numConsequencia || '—'}</td><td>{row.equipe || team}</td><td>{row.servico || '—'}</td><td>{row.qtdAjustada || '—'}</td><td>{row.responsavel || '—'}</td></tr>)}{mappedPreview.length === 0 && <tr><td colSpan={5} className="table-empty">Selecione uma planilha para visualizar os dados.</td></tr>}</tbody>
+          <tbody>{mappedPreview.map((row, index) => <tr key={index}><td>{row.numConsequencia || '—'}</td><td>{row.equipe || '—'}</td><td>{row.servico || '—'}</td><td>{row.qtdAjustada || '—'}</td><td>{row.responsavel || '—'}</td></tr>)}{mappedPreview.length === 0 && <tr><td colSpan={5} className="table-empty">Selecione a carteira geral para visualizar as ordens válidas.</td></tr>}</tbody>
         </table></div>
-        <p className="table-note">Os arquivos recebidos deste mês foram usados apenas para analisar o formato. Nenhum registro deles foi incluído nos dados demonstrativos.</p>
+        {excludedRows > 0 && <p className="table-note">{excludedRows} linha(s) com EMPRESA, EQUIPE ou RESPONSÁVEL vazios serão ignoradas.</p>}
       </section>
     </main>
   );
@@ -1232,38 +1253,69 @@ function ProtocolsPage({ orders }: { orders: Order[] }) {
   );
 }
 
-function AccessPage({ profiles, setProfiles, teamChoices, saveStatus, onRetrySave, created, setCreated }: { profiles: AccessProfile[]; setProfiles: (profiles: AccessProfile[]) => void; teamChoices: string[]; saveStatus: AdminSaveStatus; onRetrySave: () => void; created: AccessProfile | null; setCreated: (profile: AccessProfile | null) => void }) {
+function AccessPage({ orders, profiles, setProfiles, saveStatus, onRetrySave, created, setCreated }: { orders: Order[]; profiles: AccessProfile[]; setProfiles: (profiles: AccessProfile[]) => void; saveStatus: AdminSaveStatus; onRetrySave: () => void; created: AccessProfile | null; setCreated: (profile: AccessProfile | null) => void }) {
+  type NewProfileKind = 'neoenergia' | 'vencer';
   const [showForm, setShowForm] = useState(false);
-  const [kind, setKind] = useState<ProfileKind>('inspetor');
-  const [team, setTeam] = useState(teamOptions[0]);
+  const [kind, setKind] = useState<NewProfileKind>('neoenergia');
   const [responsible, setResponsible] = useState('');
   const [operatorName, setOperatorName] = useState('');
   const [label, setLabel] = useState('');
+  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const responsibleChoices = [...new Set([
+    ...orders.filter((order) => canonicalCompany(order.empresa) === kind).map((order) => order.responsavel),
+    ...profiles.filter((profile) => canonicalProfileKind(profile.kind) === kind).map((profile) => profile.responsible || ''),
+  ].map((value) => value.trim()).filter((value) => value && !isCancelOrderValue(value)))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
   function createAccess(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
+    const cleanCode = code.trim().toUpperCase();
+    const cleanPassword = password.trim();
+    if (!responsible.trim()) {
+      setError('Escolha ou informe o valor exato da coluna RESPONSÁVEL.');
+      return;
+    }
+    if (isCancelOrderValue(responsible)) {
+      setError('Uma ordem de cancelamento não pode ser usada como responsável de acesso.');
+      return;
+    }
+    if (kind === 'neoenergia' && !orders.some((order) =>
+      canonicalCompany(order.empresa) === kind && normalize(order.responsavel) === normalize(responsible.trim()))) {
+      setError('Para Neoenergia, selecione um responsável que exista na carteira atual.');
+      return;
+    }
     if (!operatorName.trim()) {
       setError('Informe o nome que ficará registrado nos protocolos.');
       return;
     }
-    const vendorKind = kind === 'vencer' || kind === 'nper';
-    if (vendorKind && !responsible.trim()) {
-      setError('Informe o responsável da planilha para limitar a carteira às ordens dele.');
+    if (cleanCode.length < 4) {
+      setError('O código de acesso precisa ter pelo menos 4 caracteres.');
       return;
     }
-    const suffix = String(Math.floor(1000 + Math.random() * 9000));
-    const codePrefix = kind === 'inspetor' ? 'INSP' : kind === 'vencer' ? 'VENCER' : kind === 'nper' ? 'NPER' : 'NEO';
+    if (profiles.some((profile) => normalize(profile.code) === normalize(cleanCode))) {
+      setError('Esse código já está em uso. Escolha outro.');
+      return;
+    }
+    if (cleanPassword.length < 4) {
+      setError('A senha precisa ter pelo menos 4 caracteres.');
+      return;
+    }
+    if (cleanPassword !== confirmPassword.trim()) {
+      setError('As senhas não coincidem.');
+      return;
+    }
     const profile: AccessProfile = {
       id: 'profile-' + Date.now(),
       kind,
-      label: label.trim() || (team + ' • ' + operatorName.trim()),
+      label: label.trim() || `${kindLabels[kind]} • ${responsible.trim()} • ${operatorName.trim()}`,
       operatorName: operatorName.trim(),
-      code: codePrefix + '-' + suffix,
-      password: String(Math.floor(1000 + Math.random() * 9000)),
-      team,
-      responsible: vendorKind ? responsible.trim() : undefined,
+      code: cleanCode,
+      password: cleanPassword,
+      team: '',
+      responsible: responsible.trim(),
       active: true,
     };
     setProfiles([...profiles, profile]);
@@ -1271,6 +1323,9 @@ function AccessPage({ profiles, setProfiles, teamChoices, saveStatus, onRetrySav
     setOperatorName('');
     setLabel('');
     setResponsible('');
+    setCode('');
+    setPassword('');
+    setConfirmPassword('');
     setShowForm(false);
   }
 
@@ -1281,25 +1336,27 @@ function AccessPage({ profiles, setProfiles, teamChoices, saveStatus, onRetrySav
   return (
     <main className="admin-content">
       <section className="panel access-panel">
-        <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Cada perfil libera somente a carteira vinculada.</p></div><button className="button button-primary" onClick={() => setShowForm((value) => !value)}>+ Criar perfil</button></div>
-        <div className="security-note"><strong>Atribuição por acesso</strong><span>O acesso guarda o nome auditado. Para Vencer, vincule também o responsável da planilha para limitar a carteira às ordens correspondentes.</span></div>
-        {created && <div className="created-credentials"><div><strong>{saveStatus === 'error' ? 'Acesso ainda não salvo' : saveStatus === 'saved' ? 'Acesso salvo no servidor' : 'Salvando acesso no servidor…'}</strong><span>{kindLabels[created.kind]} · {created.team}{created.responsible ? ' · ' + created.responsible : ''} · {created.operatorName}</span><span>{saveStatus === 'error' ? 'Não repasse este acesso ainda. Tente salvar novamente.' : saveStatus === 'saved' ? 'Guarde os dados: a senha não poderá ser consultada depois.' : 'Aguarde a confirmação antes de repassar o código e a senha.'}</span></div>{saveStatus === 'saved' && <code>{created.code} / {created.password}</code>}{saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}{saveStatus === 'saved' && <button className="text-button" onClick={() => setCreated(null)}>Fechar</button>}</div>}
+        <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Cada acesso libera somente as ordens do responsável selecionado.</p></div><button className="button button-primary" onClick={() => setShowForm((value) => !value)}>+ Criar perfil</button></div>
+        <div className="security-note"><strong>Escopo do acesso</strong><span>Escolha Neoenergia ou Vencer e vincule ao RESPONSÁVEL da carteira. O campo equipe/carteira foi removido; Inspetor entra no grupo Neoenergia.</span></div>
+        {created && <div className="created-credentials"><div><strong>{saveStatus === 'error' ? 'Acesso ainda não salvo' : saveStatus === 'saved' ? 'Acesso salvo no servidor' : 'Salvando acesso no servidor…'}</strong><span>{kindLabels[created.kind]} · {created.responsible || created.team || 'Sem responsável'} · {created.operatorName}</span><span>{saveStatus === 'error' ? 'Não repasse este acesso ainda. Tente salvar novamente.' : saveStatus === 'saved' ? 'Guarde os dados: a senha não poderá ser consultada depois.' : 'Aguarde a confirmação antes de repassar o código e a senha.'}</span></div>{saveStatus === 'saved' && <code>{created.code} / {created.password}</code>}{saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}{saveStatus === 'saved' && <button className="text-button" onClick={() => setCreated(null)}>Fechar</button>}</div>}
         {showForm && (
           <form className="access-form" onSubmit={createAccess}>
-            <div className="form-heading"><h3>Novo perfil</h3><p>O supervisor administra os códigos; nenhum cadastro é feito pela equipe.</p></div>
+            <div className="form-heading"><h3>Novo perfil</h3><p>Defina o tipo, o responsável e as credenciais que serão entregues à equipe.</p></div>
             <div className="form-grid">
-              <label className="field-group"><span>Tipo de acesso</span><select value={kind} onChange={(event) => setKind(event.target.value as ProfileKind)}>{(['inspetor', 'vencer', 'nper', 'neoenergia'] as ProfileKind[]).map((option) => <option key={option} value={option}>{kindLabels[option]}</option>)}</select></label>
-              <label className="field-group"><span>Equipe / carteira</span><input list="access-team-choices" value={team} onChange={(event) => setTeam(event.target.value)} placeholder="Digite ou selecione uma equipe" /><datalist id="access-team-choices">{teamChoices.map((option) => <option key={option} value={option} />)}</datalist></label>
-              <label className="field-group"><span>Nome de quem usará este acesso</span><input value={operatorName} onChange={(event) => setOperatorName(event.target.value)} placeholder="Ex.: João Silva" autoComplete="name" required /></label>
-              {(kind === 'vencer' || kind === 'nper') && <label className="field-group"><span>Responsável da planilha</span><input value={responsible} onChange={(event) => setResponsible(event.target.value)} placeholder="Nome como aparece em RESPONSÁVEL" /></label>}
-              <label className="field-group"><span>Identificação do perfil (opcional)</span><input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Ex.: Linha Viva • equipe 02" /></label>
+              <label className="field-group"><span>Tipo de acesso</span><select value={kind} onChange={(event) => { setKind(event.target.value as NewProfileKind); setResponsible(''); }}><option value="neoenergia">Neoenergia</option><option value="vencer">Vencer</option></select></label>
+              <label className="field-group"><span>Responsável da planilha</span><input list="access-responsible-options" value={responsible} onChange={(event) => setResponsible(event.target.value)} placeholder="Escolha ou digite como aparece na planilha" required /><datalist id="access-responsible-options">{responsibleChoices.map((option) => <option key={option} value={option} />)}</datalist></label>
+              <label className="field-group"><span>Nome registrado nos protocolos</span><input value={operatorName} onChange={(event) => setOperatorName(event.target.value)} placeholder="Ex.: João Silva" autoComplete="name" required /></label>
+              <label className="field-group"><span>Código de acesso escolhido pelo supervisor</span><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Ex.: NEO-1524" autoComplete="off" minLength={4} required /></label>
+              <label className="field-group"><span>Senha escolhida pelo supervisor</span><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Mínimo de 4 caracteres" autoComplete="new-password" minLength={4} required /></label>
+              <label className="field-group"><span>Confirme a senha</span><input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" placeholder="Digite a senha novamente" autoComplete="new-password" minLength={4} required /></label>
+              <label className="field-group"><span>Identificação do perfil (opcional)</span><input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Ex.: Vegetação • Garanhuns" /></label>
             </div>
-            {error && <div className="inline-error">{error}</div>}
-            <div className="form-actions"><button type="button" className="button button-ghost" onClick={() => setShowForm(false)}>Cancelar</button><button className="button button-primary" type="submit">Criar código e senha</button></div>
+            {error && <div className="inline-error" role="alert">{error}</div>}
+            <div className="form-actions"><button type="button" className="button button-ghost" onClick={() => setShowForm(false)}>Cancelar</button><button className="button button-primary" type="submit">Salvar e criar acesso</button></div>
           </form>
         )}
-        <div className="table-scroll"><table className="admin-table access-table"><thead><tr><th>Perfil</th><th>Tipo</th><th>Equipe</th><th>Nome auditado</th><th>Responsável da planilha</th><th>Código</th><th>Estado</th><th>Ação</th></tr></thead>
-          <tbody>{profiles.map((profile) => <tr key={profile.id}><td><strong>{profile.label}</strong></td><td>{kindLabels[profile.kind]}</td><td>{profile.team}</td><td>{profile.operatorName || profile.responsible || profile.label}</td><td>{profile.responsible || '—'}</td><td><code>{profile.code}</code></td><td><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button></td></tr>)}</tbody>
+        <div className="table-scroll"><table className="admin-table access-table"><thead><tr><th>Perfil</th><th>Tipo</th><th>Responsável</th><th>Nome auditado</th><th>Código</th><th>Estado</th><th>Ação</th></tr></thead>
+          <tbody>{profiles.map((profile) => <tr key={profile.id}><td><strong>{profile.label}</strong></td><td>{kindLabels[profile.kind]}</td><td>{profile.responsible || profile.team || '—'}</td><td>{profile.operatorName || profile.responsible || profile.label}</td><td><code>{profile.code}</code></td><td><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button></td></tr>)}</tbody>
         </table></div>
         <p className="local-warning">Os perfis e as ordens são salvos no servidor. As senhas são protegidas e não podem ser consultadas depois de criadas.</p>
       </section>
