@@ -391,7 +391,7 @@ async function updateExecution(request, env, session) {
     ...order,
     status,
     qtdExecutada: status === 'executada' ? quantity : undefined,
-    observacao,
+    observacao: observation,
     motivoImpedimento: reason || undefined,
     foto: photoUrl,
     protocolo: protocol,
