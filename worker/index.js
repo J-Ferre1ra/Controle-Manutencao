@@ -29,7 +29,9 @@ function base64url(bytes) {
 }
 
 function decodeBase64(value) {
-  const binary = atob(value);
+  const standardBase64 = String(value).replace(/-/g, '+').replace(/_/g, '/');
+  const paddedBase64 = standardBase64 + '='.repeat((4 - standardBase64.length % 4) % 4);
+  const binary = atob(paddedBase64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
@@ -265,54 +267,67 @@ async function saveAdminState(request, env) {
   const orders = Array.isArray(body.orders) ? body.orders : [];
   const profiles = Array.isArray(body.profiles) ? body.profiles : [];
   const imports = Array.isArray(body.imports) ? body.imports : [];
+  const changedParts = Array.isArray(body.changedParts)
+    ? new Set(body.changedParts.filter((part) => ['orders', 'profiles', 'imports'].includes(part)))
+    : new Set(['orders', 'profiles', 'imports']);
   if (orders.length > 12000 || profiles.length > 500 || imports.length > 5000) return json({ error: 'O arquivo excede o limite desta versão.' }, 413);
 
-  await env.DB.prepare('DELETE FROM work_orders').run();
-  for (let start = 0; start < orders.length; start += 80) {
-    const chunk = orders.slice(start, start + 80);
-    const statements = chunk.map((order) => env.DB.prepare(
-      'INSERT INTO work_orders(id, team, responsible, status, payload_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
-    ).bind(String(order.id), String(order.equipe || ''), String(order.responsavel || ''), String(order.status || 'pendente'), JSON.stringify(order), new Date().toISOString()));
-    if (statements.length) await env.DB.batch(statements);
-  }
-
-  const existingRows = await env.DB.prepare('SELECT id, password_salt, password_hash FROM access_profiles').all();
-  const existing = new Map(existingRows.results.map((row) => [row.id, row]));
-  for (const profile of profiles) {
-    const id = String(profile.id || crypto.randomUUID());
-    const code = String(profile.code || '').trim();
-    if (!code) continue;
-    const previous = existing.get(id);
-    const suppliedPassword = String(profile.password || '');
-    let salt = previous?.password_salt;
-    let passwordHash = previous?.password_hash;
-    if (suppliedPassword) {
-      salt = base64url(crypto.getRandomValues(new Uint8Array(16)));
-      passwordHash = await hashPassword(suppliedPassword, salt);
+  if (changedParts.has('orders')) {
+    await env.DB.prepare('DELETE FROM work_orders').run();
+    for (let start = 0; start < orders.length; start += 80) {
+      const chunk = orders.slice(start, start + 80);
+      const statements = chunk.map((order) => env.DB.prepare(
+        'INSERT INTO work_orders(id, team, responsible, status, payload_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+      ).bind(String(order.id), String(order.equipe || ''), String(order.responsavel || ''), String(order.status || 'pendente'), JSON.stringify(order), new Date().toISOString()));
+      if (statements.length) await env.DB.batch(statements);
     }
-    if (!salt || !passwordHash) continue;
-    const publicData = { ...profile, id, password: '' };
-    await env.DB.prepare(`INSERT INTO access_profiles(id, code, kind, password_salt, password_hash, profile_json, active, updated_at)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-      ON CONFLICT(id) DO UPDATE SET code=excluded.code, kind=excluded.kind,
-      password_salt=excluded.password_salt, password_hash=excluded.password_hash,
-      profile_json=excluded.profile_json, active=excluded.active, updated_at=excluded.updated_at`)
-      .bind(id, code, String(profile.kind || ''), salt, passwordHash, JSON.stringify(publicData), profile.active ? 1 : 0, new Date().toISOString()).run();
   }
 
-  const storedProfileIds = new Set(profiles.map((profile) => String(profile.id)));
-  for (const row of existingRows.results) {
-    if (!storedProfileIds.has(row.id)) await env.DB.prepare('DELETE FROM access_profiles WHERE id = ?1').bind(row.id).run();
+  if (changedParts.has('profiles')) {
+    const existingRows = await env.DB.prepare('SELECT id, password_salt, password_hash FROM access_profiles').all();
+    const existing = new Map(existingRows.results.map((row) => [row.id, row]));
+    for (const profile of profiles) {
+      const id = String(profile.id || crypto.randomUUID());
+      const code = String(profile.code || '').trim();
+      if (!code) continue;
+      const previous = existing.get(id);
+      const suppliedPassword = String(profile.password || '');
+      let salt = previous?.password_salt;
+      let passwordHash = previous?.password_hash;
+      if (suppliedPassword) {
+        salt = base64url(crypto.getRandomValues(new Uint8Array(16)));
+        passwordHash = await hashPassword(suppliedPassword, salt);
+      }
+      if (!salt || !passwordHash) continue;
+      const publicData = { ...profile, id, password: '' };
+      await env.DB.prepare(`INSERT INTO access_profiles(id, code, kind, password_salt, password_hash, profile_json, active, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(id) DO UPDATE SET code=excluded.code, kind=excluded.kind,
+        password_salt=excluded.password_salt, password_hash=excluded.password_hash,
+        profile_json=excluded.profile_json, active=excluded.active, updated_at=excluded.updated_at`)
+        .bind(id, code, String(profile.kind || ''), salt, passwordHash, JSON.stringify(publicData), profile.active ? 1 : 0, new Date().toISOString()).run();
+    }
+
+    const storedProfileIds = new Set(profiles.map((profile) => String(profile.id)));
+    for (const row of existingRows.results) {
+      if (!storedProfileIds.has(row.id)) await env.DB.prepare('DELETE FROM access_profiles WHERE id = ?1').bind(row.id).run();
+    }
   }
 
-  await env.DB.prepare('DELETE FROM imports').run();
-  for (let start = 0; start < imports.length; start += 80) {
-    const statements = imports.slice(start, start + 80).map((item) => env.DB.prepare(
-      'INSERT INTO imports(id, imported_at, payload_json) VALUES (?1, ?2, ?3)',
-    ).bind(String(item.id), String(item.importedAt || ''), JSON.stringify(item)));
-    if (statements.length) await env.DB.batch(statements);
+  if (changedParts.has('imports')) {
+    await env.DB.prepare('DELETE FROM imports').run();
+    for (let start = 0; start < imports.length; start += 80) {
+      const statements = imports.slice(start, start + 80).map((item) => env.DB.prepare(
+        'INSERT INTO imports(id, imported_at, payload_json) VALUES (?1, ?2, ?3)',
+      ).bind(String(item.id), String(item.importedAt || ''), JSON.stringify(item)));
+      if (statements.length) await env.DB.batch(statements);
+    }
   }
-  await env.DB.prepare('UPDATE sync_metadata SET catalog_revision = catalog_revision + 1, change_revision = change_revision + 1 WHERE id = 1').run();
+  if (changedParts.has('orders')) {
+    await env.DB.prepare('UPDATE sync_metadata SET catalog_revision = catalog_revision + 1, change_revision = change_revision + 1 WHERE id = 1').run();
+  } else if (changedParts.size) {
+    await env.DB.prepare('UPDATE sync_metadata SET change_revision = change_revision + 1 WHERE id = 1').run();
+  }
   return json({ saved: true });
 }
 

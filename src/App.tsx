@@ -113,6 +113,7 @@ export default function App() {
   const [saveRevision, setSaveRevision] = useState(0);
   const dirtyRevision = useRef(0);
   const adminDirty = useRef(false);
+  const dirtyAdminSections = useRef(new Set<'orders' | 'profiles' | 'imports'>());
   const syncCursor = useRef<SyncCursor | null>(null);
 
   function applyState(state: SharedAppState) {
@@ -164,28 +165,36 @@ export default function App() {
     setImports([]);
   }
 
-  function markAdminStateDirty() {
+  function markAdminStateDirty(section?: 'orders' | 'profiles' | 'imports') {
     if (!adminMode) return;
+    if (section) dirtyAdminSections.current.add(section);
+    else {
+      dirtyAdminSections.current.add('orders');
+      dirtyAdminSections.current.add('profiles');
+      dirtyAdminSections.current.add('imports');
+    }
     adminDirty.current = true;
     setAdminSaveStatus('saving');
     dirtyRevision.current += 1;
     setSaveRevision(dirtyRevision.current);
   }
 
-  function updateOrders(next: Order[]) { setOrders(next); markAdminStateDirty(); }
-  function updateProfiles(next: AccessProfile[]) { setProfiles(next); markAdminStateDirty(); }
-  function updateImports(next: ImportRecord[]) { setImports(next); markAdminStateDirty(); }
+  function updateOrders(next: Order[]) { setOrders(next); markAdminStateDirty('orders'); }
+  function updateProfiles(next: AccessProfile[]) { setProfiles(next); markAdminStateDirty('profiles'); }
+  function updateImports(next: ImportRecord[]) { setImports(next); markAdminStateDirty('imports'); }
 
   useEffect(() => {
     if (!ready || !adminMode || !adminDirty.current) return;
     const revision = saveRevision;
+    const changedParts = [...dirtyAdminSections.current];
     const timer = window.setTimeout(() => {
       void apiRequest('/api/admin/state', {
         method: 'POST',
-        body: JSON.stringify({ orders, profiles, imports }),
+        body: JSON.stringify({ orders, profiles, imports, changedParts }),
       }).then(() => {
         if (dirtyRevision.current === revision) {
           adminDirty.current = false;
+          dirtyAdminSections.current.clear();
           setAdminSaveStatus('saved');
         }
       }).catch(() => {
@@ -253,7 +262,12 @@ export default function App() {
         imports={imports}
         setImports={updateImports}
         saveStatus={adminSaveStatus}
-        onRetrySave={markAdminStateDirty}
+        onRetrySave={() => {
+          if (dirtyAdminSections.current.size) {
+            const pending = [...dirtyAdminSections.current];
+            for (const section of pending) markAdminStateDirty(section);
+          } else markAdminStateDirty();
+        }}
         onLogout={() => { void logout(); }}
       />
     );
