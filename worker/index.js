@@ -1,5 +1,7 @@
 const SESSION_COOKIE = 'neo_session';
 const SESSION_SECONDS = 60 * 60 * 12;
+const PASSWORD_HASH_ITERATIONS = 100000;
+const LEGACY_PASSWORD_HASH_ITERATIONS = 120000;
 const encoder = new TextEncoder();
 
 function json(data, status = 200, headers = {}) {
@@ -41,9 +43,20 @@ async function sha256(value) {
   return base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value))));
 }
 
+function parsePasswordSalt(value) {
+  const stored = String(value);
+  const match = stored.match(/^pbkdf2:(\d+):(.+)$/);
+  if (match) return { iterations: Number(match[1]), encodedSalt: match[2] };
+  return { iterations: LEGACY_PASSWORD_HASH_ITERATIONS, encodedSalt: stored };
+}
+
 async function hashPassword(password, salt) {
+  const parsed = parsePasswordSalt(salt);
+  if (!Number.isInteger(parsed.iterations) || parsed.iterations < 1 || parsed.iterations > PASSWORD_HASH_ITERATIONS) {
+    throw new Error(`PBKDF2 iteration count ${parsed.iterations} is unsupported; create a new access profile.`);
+  }
   const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: decodeBase64(salt), iterations: 120000, hash: 'SHA-256' }, key, 256);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: decodeBase64(parsed.encodedSalt), iterations: parsed.iterations, hash: 'SHA-256' }, key, 256);
   return base64url(new Uint8Array(bits));
 }
 
@@ -249,9 +262,18 @@ async function login(request, env) {
   let profile = profileRow && publicProfile(profileRow.profile_json);
   const selectedKind = kind ? canonicalProfileKind(kind) : '';
   const matchesKind = !selectedKind || selectedKind === canonicalProfileKind(profile?.kind || profileRow?.kind || '');
-  const valid = profileRow && profile && matchesKind && await equalSecret(
-    await hashPassword(password, profileRow.password_salt), profileRow.password_hash,
-  );
+  let passwordHashMatches = false;
+  if (profileRow && profile && matchesKind) {
+    try {
+      passwordHashMatches = await equalSecret(await hashPassword(password, profileRow.password_salt), profileRow.password_hash);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('create a new access profile')) {
+        return json({ error: 'Este perfil usa um hash de senha antigo e incompatível. O supervisor precisa criar um novo acesso.' }, 409);
+      }
+      throw error;
+    }
+  }
+  const valid = profileRow && profile && matchesKind && passwordHashMatches;
   if (!valid) {
     await recordFailedLogin(env, attemptKey);
     return json({ error: 'Não foi possível entrar. Confira se selecionou Neoenergia ou Vencer corretamente, além do código e da senha.' }, 401);
@@ -295,7 +317,7 @@ async function saveAdminState(request, env) {
       let salt = previous?.password_salt;
       let passwordHash = previous?.password_hash;
       if (suppliedPassword) {
-        salt = base64url(crypto.getRandomValues(new Uint8Array(16)));
+        salt = `pbkdf2:${PASSWORD_HASH_ITERATIONS}:${base64url(crypto.getRandomValues(new Uint8Array(16)))}`;
         passwordHash = await hashPassword(suppliedPassword, salt);
       }
       if (!salt || !passwordHash) continue;
