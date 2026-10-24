@@ -230,7 +230,8 @@ async function createSession(request, env, profileId, isAdmin) {
 
 function makeProtocol() {
   const date = new Date();
-  return `NEO-${date.getFullYear()}-${date.getTime().toString(36).toUpperCase()}`;
+  const suffix = crypto.randomUUID().slice(0, 8).toUpperCase();
+  return `NEO-${date.getFullYear()}-${date.getTime().toString(36).toUpperCase()}-${suffix}`;
 }
 
 async function login(request, env) {
@@ -376,9 +377,13 @@ async function updateExecution(request, env, session) {
   const now = new Date().toISOString();
   const photoData = status === 'impedimento' ? String(body.foto || '') : '';
   let photoUrl;
+  let photoContentType = '';
+  let photoBase64 = '';
   if (photoData) {
     const match = photoData.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
     if (!match || match[2].length > 1_700_000) return json({ error: 'A imagem não está em um formato válido ou excede 1,2 MB.' }, 413);
+    photoContentType = match[1];
+    photoBase64 = match[2];
     photoUrl = `/api/photos/${encodeURIComponent(protocol)}`;
   }
 
@@ -393,22 +398,27 @@ async function updateExecution(request, env, session) {
     registradoPor: session.operatorName,
     dataRegistro: now,
   };
-  const result = await env.DB.batch([
+  const statements = [
     env.DB.prepare(`UPDATE sync_metadata SET change_revision = change_revision + 1
       WHERE id = 1 AND EXISTS (SELECT 1 FROM work_orders WHERE id = ?1 AND status = 'pendente')`).bind(orderId),
     env.DB.prepare(`UPDATE work_orders SET status = ?1, payload_json = ?2, updated_at = ?3,
       change_revision = (SELECT change_revision FROM sync_metadata WHERE id = 1)
       WHERE id = ?4 AND status = 'pendente'`).bind(status, JSON.stringify(updated), now, orderId),
-  ]);
-  if (!result[1]?.meta?.changes) return json({ error: 'Outra equipe acabou de atualizar esta ordem. Atualize a lista.' }, 409);
+  ];
+
   if (photoData) {
-    const match = photoData.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
-    await env.DB.prepare('INSERT INTO photos(protocol, content_type, data_base64, team, responsible, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)')
-      .bind(protocol, match[1], match[2], order.equipe || '', order.responsavel || '', now).run();
+    statements.push(env.DB.prepare(`INSERT INTO photos(protocol, content_type, data_base64, team, responsible, created_at)
+      SELECT ?1, ?2, ?3, ?4, ?5, ?6
+      WHERE EXISTS (SELECT 1 FROM work_orders WHERE id = ?7 AND status = ?8 AND json_extract(payload_json, '$.protocolo') = ?1)`)
+      .bind(protocol, photoContentType, photoBase64, order.equipe || '', order.responsavel || '', now, orderId, status));
   }
-  await env.DB.prepare(`INSERT INTO execution_records(id, protocol, order_id, team, responsible, registered_by, status, payload_json, created_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`)
-    .bind(crypto.randomUUID(), protocol, orderId, order.equipe || '', order.responsavel || '', session.operatorName, status, JSON.stringify(updated), now).run();
+  statements.push(env.DB.prepare(`INSERT INTO execution_records(id, protocol, order_id, team, responsible, registered_by, status, payload_json, created_at)
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+    WHERE EXISTS (SELECT 1 FROM work_orders WHERE id = ?3 AND status = ?7 AND json_extract(payload_json, '$.protocolo') = ?2)`)
+    .bind(crypto.randomUUID(), protocol, orderId, order.equipe || '', order.responsavel || '', session.operatorName, status, JSON.stringify(updated), now));
+
+  const result = await env.DB.batch(statements);
+  if (!result[1]?.meta?.changes) return json({ error: 'Outra equipe acabou de atualizar esta ordem. Atualize a lista.' }, 409);
   return json({ order: updated });
 }
 
@@ -470,8 +480,18 @@ export default {
       }
       return await route(request, env);
     } catch (error) {
-      console.error('Worker request failed:', error);
-      return json({ error: 'Falha temporária no servidor. Tente novamente.' }, 500);
+      const rayId = request.headers.get('cf-ray') || crypto.randomUUID();
+      const detail = error instanceof Error
+        ? { name: error.name, message: error.message, stack: error.stack || '' }
+        : { name: typeof error, message: String(error) };
+      console.error(JSON.stringify({
+        event: 'worker_request_failed',
+        method: request.method,
+        path: new URL(request.url).pathname,
+        rayId,
+        error: detail,
+      }));
+      return json({ error: `Falha temporária no servidor. Referência: ${rayId}.` }, 500, { 'x-error-reference': rayId });
     }
   },
 };
