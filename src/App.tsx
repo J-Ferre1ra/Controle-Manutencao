@@ -267,16 +267,17 @@ export default function App() {
     return <SupervisorLogin onBack={() => setSupervisorLoginOpen(false)} onLogin={(code, password) => login('admin', code, password)} />;
   }
 
-  return <LoginScreen onLogin={(code, password) => login('', code, password)} onOpenAdmin={() => setSupervisorLoginOpen(true)} />;
+  return <LoginScreen onLogin={(kind, code, password) => login(kind, code, password)} onOpenAdmin={() => setSupervisorLoginOpen(true)} />;
 }
 
 function LoginScreen({
   onLogin,
   onOpenAdmin,
 }: {
-  onLogin: (code: string, password: string) => Promise<void>;
+  onLogin: (kind: 'neoenergia' | 'vencer', code: string, password: string) => Promise<void>;
   onOpenAdmin: () => void;
 }) {
+  const [kind, setKind] = useState<'neoenergia' | 'vencer'>('neoenergia');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -287,7 +288,7 @@ function LoginScreen({
     setError('');
     setSubmitting(true);
     try {
-      await onLogin(code, password);
+      await onLogin(kind, code, password);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Não foi possível validar o acesso.');
     } finally {
@@ -300,9 +301,13 @@ function LoginScreen({
       <section className="login-card">
         <div className="login-brand-panel"><Brand /></div>
         <h1>Acesso da equipe</h1>
-        <p className="login-intro">Informe o código e a senha fornecidos pelo supervisor. O acesso abre apenas as ordens do responsável vinculado.</p>
+        <p className="login-intro">Escolha a empresa do acesso e informe o código e a senha fornecidos pelo supervisor.</p>
 
         <form onSubmit={handleSubmit} className="login-form">
+          <div className="segmented-control segmented-two" role="tablist" aria-label="Empresa da equipe">
+            <button type="button" role="tab" aria-selected={kind === 'neoenergia'} className={'segment' + (kind === 'neoenergia' ? ' active' : '')} onClick={() => { setKind('neoenergia'); setError(''); }}>Neoenergia</button>
+            <button type="button" role="tab" aria-selected={kind === 'vencer'} className={'segment' + (kind === 'vencer' ? ' active' : '')} onClick={() => { setKind('vencer'); setError(''); }}>Vencer</button>
+          </div>
           <label className="field-group">
             <span>Código de acesso</span>
             <input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Ex.: NEO-1524" autoComplete="username" required />
