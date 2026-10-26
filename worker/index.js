@@ -157,7 +157,29 @@ async function readState(env, session) {
     const profileRows = await env.DB.prepare('SELECT profile_json FROM access_profiles ORDER BY updated_at DESC').all();
     profiles = profileRows.results.map((row) => publicProfile(row.profile_json)).filter(Boolean);
   }
-  return { orders, profiles, imports, sync, full: true };
+  return { orders, profiles, imports, notifications: [], sync, full: true };
+}
+
+async function readExecutionNotifications(env, session, afterRevision, throughRevision) {
+  const rows = await env.DB.prepare(`SELECT payload_json FROM work_orders
+    WHERE change_revision > ?1 AND change_revision <= ?2 AND status IN ('executada', 'impedimento')
+    ORDER BY change_revision, id`).bind(afterRevision, throughRevision).all();
+
+  return rows.results.map((row) => JSON.parse(row.payload_json))
+    .filter((order) => order.protocolo && order.dataRegistro && (
+      session.isAdmin || canonicalCompany(order.empresa) === canonicalProfileKind(session.kind)
+    ))
+    .map((order) => ({
+      id: String(order.protocolo),
+      orderNumber: String(order.numConsequencia || ''),
+      team: String(order.equipe || ''),
+      service: String(order.servico || ''),
+      registeredBy: String(order.registradoPor || ''),
+      status: order.status,
+      ...(Number.isFinite(Number(order.qtdExecutada)) ? { quantity: Number(order.qtdExecutada) } : {}),
+      occurredAt: String(order.dataRegistro),
+      protocol: String(order.protocolo),
+    }));
 }
 
 async function readIncrementalState(env, session, url) {
@@ -174,8 +196,10 @@ async function readIncrementalState(env, session, url) {
     return readState(env, session);
   }
   if (changeRevision >= cursor.changeRevision) {
-    return { orders: [], profiles: [], imports: [], sync: cursor, full: false, unchanged: true };
+    return { orders: [], profiles: [], imports: [], notifications: [], sync: cursor, full: false, unchanged: true };
   }
+
+  const notifications = await readExecutionNotifications(env, session, changeRevision, cursor.changeRevision);
 
   let result;
   if (session.isAdmin) {
@@ -185,10 +209,10 @@ async function readIncrementalState(env, session, url) {
   } else if (normalize(session.responsible)) {
     result = await env.DB.prepare('SELECT payload_json FROM work_orders WHERE change_revision > ?1 AND responsible = ?2 COLLATE NOCASE ORDER BY change_revision, id').bind(changeRevision, session.responsible).all();
   } else {
-    return { orders: [], profiles: [], imports: [], sync: cursor, full: false, unchanged: true };
+    return { orders: [], profiles: [], imports: [], notifications, sync: cursor, full: false, unchanged: notifications.length === 0 };
   }
   const orders = result.results.map((row) => JSON.parse(row.payload_json)).filter((order) => allowedOrder(session, order));
-  return { orders, profiles: [], imports: [], sync: cursor, full: false, unchanged: orders.length === 0 };
+  return { orders, profiles: [], imports: [], notifications, sync: cursor, full: false, unchanged: orders.length === 0 && notifications.length === 0 };
 }
 
 async function requireSession(request, env) {
@@ -354,6 +378,100 @@ async function saveAdminState(request, env) {
   return json({ saved: true });
 }
 
+async function addSupplementalOrders(request, env) {
+  const body = await request.json();
+  const incoming = Array.isArray(body.orders) ? body.orders : [];
+  if (incoming.length === 0) return json({ error: 'A planilha não contém ordens para adicionar.' }, 400);
+  if (incoming.length > 3000) return json({ error: 'A planilha complementar deve conter no máximo 3.000 ordens por envio.' }, 413);
+
+  const text = (value, limit) => String(value ?? '').trim().slice(0, limit);
+  const fileName = text(body.fileName, 240) || 'Planilha complementar';
+  const sheetName = text(body.sheetName, 120);
+  const sourceColumns = Array.isArray(body.sourceColumns)
+    ? body.sourceColumns.slice(0, 120).map((column) => text(column, 120)).filter(Boolean)
+    : [];
+  const rows = [];
+  let excludedCount = 0;
+  for (const raw of incoming) {
+    const numConsequencia = text(raw.numConsequencia, 100);
+    const companyInput = normalize(raw.empresa);
+    const empresa = companyInput === 'vencer' ? 'Vencer' : companyInput === 'neoenergia' || companyInput === 'nper' ? 'Neoenergia' : '';
+    const equipe = text(raw.equipe, 200);
+    const responsavel = text(raw.responsavel, 200);
+    const servico = text(raw.servico, 300);
+    const qtdAjustada = text(raw.qtdAjustada, 80);
+    const quantityMatch = qtdAjustada.replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+    if (!numConsequencia || !empresa || !equipe || !responsavel || !servico || !quantityMatch || Number(quantityMatch[0]) <= 0) {
+      excludedCount += 1;
+      continue;
+    }
+    const rawOriginal = raw.original && typeof raw.original === 'object' ? Object.entries(raw.original).slice(0, 120) : [];
+    const original = Object.fromEntries(rawOriginal.map(([key, value]) => [text(key, 120), text(value, 500)]).filter(([key]) => key));
+    rows.push({
+      id: `supplement-${crypto.randomUUID()}`,
+      alimentador: text(raw.alimentador, 200),
+      barramento: text(raw.barramento, 200),
+      qtdAjustada,
+      numConsequencia,
+      empresa,
+      equipe,
+      servico,
+      avanco: text(raw.avanco, 100),
+      responsavel,
+      endereco: text(raw.endereco, 500),
+      status: 'pendente',
+      original,
+      sourceColumns,
+      sourceSheet: sheetName,
+      sourceFile: fileName,
+      sourceKind: empresa === 'Vencer' ? 'vencer' : 'controle',
+    });
+  }
+  if (rows.length === 0) return json({ error: 'Não encontrei ordens completas. Cada linha precisa ter número, empresa, equipe, responsável, serviço e quantidade ajustada maior que zero.' }, 400);
+
+  const existingRows = await env.DB.prepare('SELECT payload_json FROM work_orders').all();
+  const orderKey = (order) => [normalize(order.numConsequencia), canonicalCompany(order.empresa), normalize(order.responsavel)].join('|');
+  const seen = new Set(existingRows.results.map((row) => orderKey(JSON.parse(row.payload_json))));
+  const additions = [];
+  let duplicateCount = 0;
+  for (const order of rows) {
+    const key = orderKey(order);
+    if (seen.has(key)) {
+      duplicateCount += 1;
+      continue;
+    }
+    seen.add(key);
+    additions.push(order);
+  }
+
+  const now = new Date().toISOString();
+  for (let start = 0; start < additions.length; start += 79) {
+    const chunk = additions.slice(start, start + 79);
+    const statements = [env.DB.prepare('UPDATE sync_metadata SET change_revision = change_revision + 1 WHERE id = 1')];
+    for (const order of chunk) {
+      statements.push(env.DB.prepare(`INSERT INTO work_orders(id, team, responsible, status, payload_json, updated_at, change_revision)
+        SELECT ?1, ?2, ?3, 'pendente', ?4, ?5, change_revision FROM sync_metadata WHERE id = 1`)
+        .bind(order.id, order.equipe, order.responsavel, JSON.stringify(order), now));
+    }
+    await env.DB.batch(statements);
+  }
+
+  const importRecord = {
+    id: `supplement-import-${crypto.randomUUID()}`,
+    fileName,
+    source: 'Ordens complementares',
+    team: 'Carteira geral',
+    importedAt: now,
+    orderCount: additions.length,
+    duplicateCount,
+    excludedCount,
+    sheetName,
+  };
+  await env.DB.prepare('INSERT INTO imports(id, imported_at, payload_json) VALUES (?1, ?2, ?3)')
+    .bind(importRecord.id, now, JSON.stringify(importRecord)).run();
+  return json({ orders: additions, addedCount: additions.length, duplicateCount, excludedCount, importRecord }, 201);
+}
+
 async function updateExecution(request, env, session) {
   if (session.isAdmin) return json({ error: 'Use a tela de administração para alterar as ordens.' }, 403);
   const body = await request.json();
@@ -462,6 +580,16 @@ async function route(request, env) {
       const detail = error instanceof Error ? error.message : String(error);
       console.error('Admin state save failed:', error);
       return json({ error: `Falha ao salvar no servidor: ${detail.slice(0, 240)}` }, 500);
+    }
+  }
+  if (path === '/api/admin/orders/import' && request.method === 'POST') {
+    if (!session.isAdmin) return json({ error: 'Apenas o supervisor pode adicionar ordens à carteira.' }, 403);
+    try {
+      return await addSupplementalOrders(request, env);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error('Supplemental order import failed:', error);
+      return json({ error: `Falha ao importar ordens complementares: ${detail.slice(0, 240)}` }, 500);
     }
   }
   if (path === '/api/executions' && request.method === 'POST') return updateExecution(request, env, session);

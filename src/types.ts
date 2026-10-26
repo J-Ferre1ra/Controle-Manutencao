@@ -48,7 +48,21 @@ export interface ImportRecord {
   team: string;
   importedAt: string;
   orderCount: number;
+  duplicateCount?: number;
+  excludedCount?: number;
   sheetName?: string;
+}
+
+export interface ExecutionNotification {
+  id: string;
+  orderNumber: string;
+  team: string;
+  service: string;
+  registeredBy: string;
+  status: OrderStatus;
+  quantity?: number;
+  occurredAt: string;
+  protocol: string;
 }
 
 export interface SessionProfile {

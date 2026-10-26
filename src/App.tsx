@@ -4,7 +4,9 @@ import { apiRequest, readSharedState } from './data/api';
 import type { SharedAppState, SyncCursor } from './data/api';
 import { exportControlWorkbook, mapSpreadsheetRow, readWorkbook, rowsFromSheet } from './lib/excel';
 import type { ParsedWorkbook } from './lib/excel';
-import type { AccessProfile, AdminPage, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
+import type { AccessProfile, AdminPage, ExecutionNotification, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
+
+const SYNC_POLL_INTERVAL_MS = 2 * 60 * 1000;
 
 const kindLabels: Record<ProfileKind, string> = {
   inspetor: 'Neoenergia',
@@ -53,6 +55,8 @@ function parseQuantity(value: string): number {
 }
 
 type AdminSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+type SupplementalImportInput = { fileName: string; sheetName: string; sourceColumns: string[]; orders: Omit<Order, 'id' | 'status'>[] };
+type SupplementalImportResult = { addedCount: number; duplicateCount: number; excludedCount: number; importRecord: ImportRecord; orders: Order[] };
 
 function isPortfolioSheet(workbook: ParsedWorkbook['workbook'], sheetName: string): boolean {
   const headers = Object.keys(rowsFromSheet(workbook, sheetName)[0]?.values ?? {}).map(normalizeHeader);
@@ -100,6 +104,24 @@ function StatusBadge({ status }: { status: OrderStatus }) {
   return <span className={'status-badge status-' + status}>{statusText(status)}</span>;
 }
 
+function ExecutionNotificationStack({ items, onDismiss }: { items: ExecutionNotification[]; onDismiss: (id: string) => void }) {
+  if (items.length === 0) return null;
+  return (
+    <aside className="execution-notification-stack" aria-label="Notificações de execução" aria-live="polite">
+      {items.map((item) => (
+        <article className="execution-notification" key={item.id} role="status">
+          <button type="button" className="notification-dismiss" aria-label="Fechar notificação" onClick={() => onDismiss(item.id)}>×</button>
+          <span className="notification-eyebrow">Ordem atualizada</span>
+          <strong>{item.registeredBy || item.team} {item.status === 'executada' ? 'concluiu uma ordem' : 'registrou um impedimento'}</strong>
+          <span>OS {item.orderNumber} · {item.team}</span>
+          {item.service && <small>{item.service}{item.quantity !== undefined ? ` · ${item.quantity} realizada(s)` : ''}</small>}
+          <small>{formatDate(item.occurredAt)}</small>
+        </article>
+      ))}
+    </aside>
+  );
+}
+
 export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
@@ -111,11 +133,21 @@ export default function App() {
   const [connectionError, setConnectionError] = useState('');
   const [adminSaveStatus, setAdminSaveStatus] = useState<AdminSaveStatus>('idle');
   const [adminSaveError, setAdminSaveError] = useState('');
+  const [executionNotifications, setExecutionNotifications] = useState<ExecutionNotification[]>([]);
   const [saveRevision, setSaveRevision] = useState(0);
   const dirtyRevision = useRef(0);
   const adminDirty = useRef(false);
   const dirtyAdminSections = useRef(new Set<'orders' | 'profiles' | 'imports'>());
   const syncCursor = useRef<SyncCursor | null>(null);
+  const seenNotificationIds = useRef(new Set<string>());
+
+  function rememberOwnExecution(order: Order) {
+    if (order.protocolo) seenNotificationIds.current.add(order.protocolo);
+  }
+
+  function dismissExecutionNotification(id: string) {
+    setExecutionNotifications((current) => current.filter((item) => item.id !== id));
+  }
 
   function applyState(state: SharedAppState) {
     setOrders(state.orders);
@@ -164,6 +196,8 @@ export default function App() {
     setOrders([]);
     setProfiles([]);
     setImports([]);
+    setExecutionNotifications([]);
+    seenNotificationIds.current.clear();
   }
 
   function markAdminStateDirty(section?: 'orders' | 'profiles' | 'imports') {
@@ -184,6 +218,16 @@ export default function App() {
   function updateOrders(next: Order[]) { setOrders(next); markAdminStateDirty('orders'); }
   function updateProfiles(next: AccessProfile[]) { setProfiles(next); markAdminStateDirty('profiles'); }
   function updateImports(next: ImportRecord[]) { setImports(next); markAdminStateDirty('imports'); }
+
+  async function importSupplementalOrders(input: SupplementalImportInput): Promise<SupplementalImportResult> {
+    const response = await apiRequest<SupplementalImportResult>('/api/admin/orders/import', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    if (response.orders.length) setOrders((current) => [...current, ...response.orders]);
+    setImports((current) => [response.importRecord, ...current]);
+    return response;
+  }
 
   useEffect(() => {
     if (!ready || !adminMode || !adminDirty.current) return;
@@ -223,6 +267,11 @@ export default function App() {
         if (!active) return;
         const isFullSync = state.full !== false;
         if (state.sync) syncCursor.current = state.sync;
+        const newNotifications = (state.notifications ?? []).filter((item) => !seenNotificationIds.current.has(item.id));
+        if (newNotifications.length) {
+          for (const item of newNotifications) seenNotificationIds.current.add(item.id);
+          setExecutionNotifications((current) => [...current, ...newNotifications].slice(-4));
+        }
         if (state.unchanged) return;
         if (isFullSync) {
           setOrders((current) => JSON.stringify(current) === JSON.stringify(state.orders) ? current : state.orders);
@@ -245,7 +294,7 @@ export default function App() {
         refreshing = false;
       }
     };
-    const timer = window.setInterval(() => { void refresh(); }, 15000);
+    const timer = window.setInterval(() => { void refresh(); }, SYNC_POLL_INTERVAL_MS);
     const onVisibilityChange = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
@@ -260,28 +309,37 @@ export default function App() {
 
   if (adminMode) {
     return (
-      <AdminApp
-        orders={orders}
-        setOrders={updateOrders}
-        profiles={profiles}
-        setProfiles={updateProfiles}
-        imports={imports}
-        setImports={updateImports}
-        saveStatus={adminSaveStatus}
-        saveError={adminSaveError}
-        onRetrySave={() => {
-          if (dirtyAdminSections.current.size) {
-            const pending = [...dirtyAdminSections.current];
-            for (const section of pending) markAdminStateDirty(section);
-          } else markAdminStateDirty();
-        }}
-        onLogout={() => { void logout(); }}
-      />
+      <>
+        <AdminApp
+          orders={orders}
+          setOrders={updateOrders}
+          onImportSupplemental={importSupplementalOrders}
+          profiles={profiles}
+          setProfiles={updateProfiles}
+          imports={imports}
+          setImports={updateImports}
+          saveStatus={adminSaveStatus}
+          saveError={adminSaveError}
+          onRetrySave={() => {
+            if (dirtyAdminSections.current.size) {
+              const pending = [...dirtyAdminSections.current];
+              for (const section of pending) markAdminStateDirty(section);
+            } else markAdminStateDirty();
+          }}
+          onLogout={() => { void logout(); }}
+        />
+        <ExecutionNotificationStack items={executionNotifications} onDismiss={dismissExecutionNotification} />
+      </>
     );
   }
 
   if (session) {
-    return <FieldApp session={session} orders={orders} setOrders={setOrders} onLogout={() => { void logout(); }} />;
+    return (
+      <>
+        <FieldApp session={session} orders={orders} setOrders={setOrders} onExecutionSaved={rememberOwnExecution} onLogout={() => { void logout(); }} />
+        <ExecutionNotificationStack items={executionNotifications} onDismiss={dismissExecutionNotification} />
+      </>
+    );
   }
 
   if (supervisorLoginOpen) {
@@ -388,11 +446,13 @@ function FieldApp({
   session,
   orders,
   setOrders,
+  onExecutionSaved,
   onLogout,
 }: {
   session: SessionProfile;
   orders: Order[];
   setOrders: (orders: Order[]) => void;
+  onExecutionSaved: (order: Order) => void;
   onLogout: () => void;
 }) {
   const [page, setPage] = useState<'lista' | 'registro' | 'protocolo'>('lista');
@@ -508,6 +568,7 @@ function FieldApp({
         }),
       });
       const updated = response.order;
+      onExecutionSaved(updated);
       setOrders(orders.map((order) => order.id === updated.id ? updated : order));
       setLastSaved(updated);
       setPage('protocolo');
@@ -687,6 +748,7 @@ function Detail({ label, value }: { label: string; value: string }) {
 function AdminApp({
   orders,
   setOrders,
+  onImportSupplemental,
   profiles,
   setProfiles,
   imports,
@@ -698,6 +760,7 @@ function AdminApp({
 }: {
   orders: Order[];
   setOrders: (orders: Order[]) => void;
+  onImportSupplemental: (input: SupplementalImportInput) => Promise<SupplementalImportResult>;
   profiles: AccessProfile[];
   setProfiles: (profiles: AccessProfile[]) => void;
   imports: ImportRecord[];
@@ -804,7 +867,7 @@ function AdminApp({
             onExport={exportCurrent}
           />
         )}
-        {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} onExportPortfolio={exportPortfolio} />}
+        {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} onExportPortfolio={exportPortfolio} onImportSupplemental={onImportSupplemental} />}
         {page === 'protocolos' && <ProtocolsPage orders={orders} />}
         {page === 'acessos' && <AccessPage orders={orders} profiles={profiles} setProfiles={setProfiles} saveStatus={saveStatus} saveError={saveError} onRetrySave={onRetrySave} created={createdProfile} setCreated={setCreatedProfile} />}
       </div>
@@ -1094,31 +1157,38 @@ function ImportPage({
   imports,
   setImports,
   onExportPortfolio,
+  onImportSupplemental,
 }: {
   orders: Order[];
   setOrders: (orders: Order[]) => void;
   imports: ImportRecord[];
   setImports: (imports: ImportRecord[]) => void;
   onExportPortfolio: () => Promise<void>;
+  onImportSupplemental: (input: SupplementalImportInput) => Promise<SupplementalImportResult>;
 }) {
   const [file, setFile] = useState<ParsedWorkbook | null>(null);
   const [sheetName, setSheetName] = useState('');
+  const [importMode, setImportMode] = useState<'substituir' | 'complementar'>('substituir');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [auditExported, setAuditExported] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
   const rows = useMemo(() => file && sheetName ? rowsFromSheet(file.workbook, sheetName) : [], [file, sheetName]);
   const orderRows = useMemo(() => rows.map((row) => mapSpreadsheetRow(row, ''))
     .filter((row) => row.numConsequencia.trim()), [rows]);
   const validRows = useMemo(() => orderRows.filter((row) =>
     Boolean(row.empresa.trim() && row.responsavel.trim() && row.equipe.trim())), [orderRows]);
-  const excludedRows = orderRows.length - validRows.length;
-  const mappedPreview = validRows.slice(0, 4);
+  const supplementalRows = useMemo(() => validRows.filter((row) => Boolean(row.servico.trim() && row.qtdAjustada.trim())), [validRows]);
+  const rowsToPreview = importMode === 'complementar' ? supplementalRows : validRows;
+  const excludedRows = orderRows.length - rowsToPreview.length;
+  const mappedPreview = rowsToPreview.slice(0, 4);
   const columns = rows[0] ? Object.keys(rows[0].values) : [];
 
   async function onFile(event: ChangeEvent<HTMLInputElement>) {
     const selectedFile = event.target.files?.[0];
     if (!selectedFile) return;
+    event.target.value = '';
     setError('');
     setMessage('');
     setAuditExported(false);
@@ -1128,7 +1198,7 @@ function ImportPage({
       if (!selectedSheet) {
         setFile(null);
         setSheetName('');
-        setError('Não consegui identificar a carteira geral. Use a aba ACOMPANHAMENTO ou um arquivo com uma única aba de ordens, contendo número da ordem, EMPRESA, EQUIPE e RESPONSÁVEL.');
+        setError('Não consegui identificar uma aba de ordens. Use uma planilha com número da ordem, EMPRESA, EQUIPE e RESPONSÁVEL.');
         return;
       }
       setFile(workbook);
@@ -1157,11 +1227,43 @@ function ImportPage({
     }
   }
 
-  function importRows() {
+  async function importRows() {
     if (!file || rows.length === 0 || !sheetName) {
-      setError('Selecione a planilha da carteira geral.');
+      setError(importMode === 'complementar' ? 'Selecione a planilha com as ordens que serão acrescentadas.' : 'Selecione a planilha da carteira geral.');
       return;
     }
+    if (rowsToPreview.length === 0) {
+      setError(importMode === 'complementar'
+        ? 'Não encontrei ordens completas. Confira número, empresa, equipe, responsável, serviço e quantidade ajustada.'
+        : 'Não encontrei ordens com EMPRESA, EQUIPE e RESPONSÁVEL preenchidos.');
+      return;
+    }
+
+    if (importMode === 'complementar') {
+      setImporting(true);
+      setError('');
+      setMessage('');
+      const additions = orderRows.map((mapped) => ({
+        ...mapped,
+        qtdExecutada: undefined,
+        sourceColumns: columns,
+        sourceSheet: sheetName,
+        sourceFile: file.fileName,
+        sourceKind: canonicalCompany(mapped.empresa) === 'vencer' ? 'vencer' as const : 'controle' as const,
+      }));
+      try {
+        const result = await onImportSupplemental({ fileName: file.fileName, sheetName, sourceColumns: columns, orders: additions });
+        setMessage(`${result.addedCount.toLocaleString('pt-BR')} nova(s) ordem(ns) acrescentada(s) à carteira.${result.duplicateCount ? ` ${result.duplicateCount} já existia(m) e não foi(ram) duplicada(s).` : ''}${result.excludedCount ? ` ${result.excludedCount} linha(s) incompleta(s) foram ignoradas.` : ''}`);
+        setFile(null);
+        setSheetName('');
+      } catch (importError) {
+        setError(importError instanceof Error ? importError.message : 'Não foi possível acrescentar as ordens.');
+      } finally {
+        setImporting(false);
+      }
+      return;
+    }
+
     if (validRows.length === 0) {
       setError('Não encontrei ordens com EMPRESA, EQUIPE e RESPONSÁVEL preenchidos.');
       return;
@@ -1222,20 +1324,35 @@ function ImportPage({
     <main className="admin-content">
       <div className="import-layout">
         <section className="panel import-form-panel">
-          <div className="panel-heading"><div><h2>Importar carteira geral</h2><p className="muted">Uma planilha distribui as ordens pelos perfis.</p></div><span className="step-chip">Somente supervisor</span></div>
-          {orders.length > 0 && <div className="security-note"><strong>Troca mensal com cópia de auditoria</strong><span>Exporte a carteira completa antes de carregar a nova. A importação substituirá as ordens ativas.</span><button type="button" className="button button-secondary" disabled={exporting} onClick={() => { void exportCurrentPortfolio(); }}>{exporting ? 'Exportando…' : 'Exportar carteira completa'}</button>{auditExported && <span className="success-text">Cópia exportada nesta sessão.</span>}</div>}
+          <div className="panel-heading"><div><h2>Importar ordens</h2><p className="muted">A carteira geral distribui as ordens pelos perfis de acesso.</p></div><span className="step-chip">Somente supervisor</span></div>
+          <div className="segmented-control segmented-two" role="group" aria-label="Tipo de importação">
+            <button type="button" className={importMode === 'substituir' ? 'segment active' : 'segment'} onClick={() => { setImportMode('substituir'); setError(''); setMessage(''); }}>Nova carteira do mês</button>
+            <button type="button" className={importMode === 'complementar' ? 'segment active' : 'segment'} onClick={() => { setImportMode('complementar'); setError(''); setMessage(''); }}>Acrescentar ordens</button>
+          </div>
+          {importMode === 'substituir' && orders.length > 0 && <div className="security-note"><strong>Troca mensal com cópia de auditoria</strong><span>Exporte a carteira completa antes de carregar a nova. Esta opção substituirá as ordens ativas.</span><button type="button" className="button button-secondary" disabled={exporting} onClick={() => { void exportCurrentPortfolio(); }}>{exporting ? 'Exportando…' : 'Exportar carteira completa'}</button>{auditExported && <span className="success-text">Cópia exportada nesta sessão.</span>}</div>}
+          {importMode === 'complementar' && <div className="mapping-note"><strong>Importação complementar</strong><span>As novas ordens serão acrescentadas à carteira atual. As ordens existentes e seus registros serão preservados; números já cadastrados não serão duplicados.</span></div>}
           <label className="upload-dropzone">
             <span className="file-icon">XLSX</span>
-            <span><strong>Selecione a carteira geral do mês</strong><small>As abas de apresentação e resumo não serão importadas.</small></span>
+            <span><strong>{importMode === 'complementar' ? 'Selecione a planilha com as novas ordens' : 'Selecione a carteira geral do mês'}</strong><small>As abas de apresentação e resumo não serão importadas.</small></span>
             <span className="button button-secondary file-button">Selecionar arquivo</span>
             <input type="file" accept=".xlsx,.xls" onChange={onFile} />
           </label>
           {file && (
             <>
-              <div className="file-selected"><div><strong>{file.fileName}</strong><small>{validRows.length.toLocaleString('pt-BR')} ordens válidas · {columns.length} colunas{excludedRows ? ` · ${excludedRows} linha(s) serão ignoradas` : ''}</small></div>
+              <div className="file-selected"><div><strong>{file.fileName}</strong><small>{rowsToPreview.length.toLocaleString('pt-BR')} ordens válidas · {columns.length} colunas{excludedRows ? ` · ${excludedRows} linha(s) serão ignoradas` : ''}</small></div>
                 <span>{sheetName}</span>
               </div>
-              <div className="import-actions"><span>Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não serão incluídas.</span><button className="button button-primary" onClick={importRows}>Validar e importar carteira</button></div>
+              <div className="import-preview">
+                <div className="import-preview-heading">
+                  <strong>Conferência antes de importar</strong>
+                  <small>Mostrando até {Math.min(4, rowsToPreview.length)} de {rowsToPreview.length.toLocaleString('pt-BR')} linhas aceitas. Esta conferência não grava nada.</small>
+                </div>
+                <div className="table-scroll"><table className="admin-table preview-table"><thead><tr><th>Ordem</th><th>Equipe</th><th>Serviço</th><th>Qtd. ajustada</th><th>Responsável</th></tr></thead>
+                  <tbody>{mappedPreview.map((row, index) => <tr key={index}><td>{row.numConsequencia || '—'}</td><td>{row.equipe || '—'}</td><td>{row.servico || '—'}</td><td>{row.qtdAjustada || '—'}</td><td>{row.responsavel || '—'}</td></tr>)}{mappedPreview.length === 0 && <tr><td colSpan={5} className="table-empty">Nenhuma linha atende aos campos obrigatórios.</td></tr>}</tbody>
+                </table></div>
+                {excludedRows > 0 && <p className="table-note">{excludedRows} linha(s) incompleta(s) serão ignoradas{importMode === 'complementar' ? ' por falta de número, empresa, equipe, responsável, serviço ou quantidade ajustada.' : ' por falta de número, empresa, equipe ou responsável.'}</p>}
+              </div>
+              <div className="import-actions"><span>{importMode === 'complementar' ? 'Novas linhas precisam ter número, empresa, equipe, responsável, serviço e quantidade.' : 'Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não serão incluídas.'}</span><button className="button button-primary" disabled={importing} onClick={() => { void importRows(); }}>{importing ? 'Importando…' : importMode === 'complementar' ? 'Acrescentar à carteira atual' : 'Validar e substituir carteira'}</button></div>
             </>
           )}
           {message && <div className="inline-success">{message}</div>}
@@ -1243,25 +1360,19 @@ function ImportPage({
         </section>
 
         <section className="panel import-history-panel">
-          <div className="panel-heading"><div><h2>Importações recentes</h2><p className="muted">Registro das carteiras carregadas</p></div></div>
+          <div className="panel-heading"><div><h2>Importações recentes</h2><p className="muted">Carteiras do mês e ordens complementares</p></div></div>
           <div className="import-history-list">
             {imports.slice(0, 4).map((item) => (
               <article className="import-history-item" key={item.id}>
-                <strong>{item.source}</strong><span>{item.fileName}</span><div><small>{formatDate(item.importedAt)}</small><small className="success-text">{item.orderCount} ordens</small></div>
+                <strong>{item.source}</strong><span>{item.fileName}</span><div><small>{formatDate(item.importedAt)}</small><small className="success-text">{item.orderCount} adicionada(s)</small></div>
+                {Boolean(item.duplicateCount || item.excludedCount) && <small>{item.duplicateCount || 0} duplicada(s) · {item.excludedCount || 0} incompleta(s) ignorada(s)</small>}
               </article>
             ))}
           </div>
-          <div className="mapping-note"><strong>Filtro de linhas incompletas</strong><span>Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não entram na carteira para evitar divergência nos acessos.</span></div>
+          <div className="mapping-note"><strong>Filtro de linhas incompletas</strong><span>Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não entram na carteira. Na importação complementar, também são exigidos serviço e quantidade ajustada.</span></div>
         </section>
       </div>
 
-      <section className="panel preview-panel">
-        <div className="panel-heading"><div><h2>Prévia das ordens válidas</h2><p className="muted">Conferência antes de substituir a carteira ativa.</p></div><span className="demo-tag">{validRows.length ? validRows.length.toLocaleString('pt-BR') + ' ordens' : 'Sem arquivo selecionado'}</span></div>
-        <div className="table-scroll"><table className="admin-table preview-table"><thead><tr><th>Ordem</th><th>Equipe</th><th>Serviço</th><th>Qtd. ajustada</th><th>Responsável</th></tr></thead>
-          <tbody>{mappedPreview.map((row, index) => <tr key={index}><td>{row.numConsequencia || '—'}</td><td>{row.equipe || '—'}</td><td>{row.servico || '—'}</td><td>{row.qtdAjustada || '—'}</td><td>{row.responsavel || '—'}</td></tr>)}{mappedPreview.length === 0 && <tr><td colSpan={5} className="table-empty">Selecione a carteira geral para visualizar as ordens válidas.</td></tr>}</tbody>
-        </table></div>
-        {excludedRows > 0 && <p className="table-note">{excludedRows} linha(s) com EMPRESA, EQUIPE ou RESPONSÁVEL vazios serão ignoradas.</p>}
-      </section>
     </main>
   );
 }

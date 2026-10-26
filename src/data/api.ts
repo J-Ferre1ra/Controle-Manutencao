@@ -1,9 +1,10 @@
-import type { AccessProfile, ImportRecord, Order, SessionProfile } from '../types';
+import type { AccessProfile, ExecutionNotification, ImportRecord, Order, SessionProfile } from '../types';
 
 export interface SharedAppState {
   orders: Order[];
   profiles: AccessProfile[];
   imports: ImportRecord[];
+  notifications?: ExecutionNotification[];
   sync?: SyncCursor;
   full?: boolean;
   unchanged?: boolean;
