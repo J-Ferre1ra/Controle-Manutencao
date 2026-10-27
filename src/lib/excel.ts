@@ -23,6 +23,7 @@ const exportColumns = [
   'AVANÇO',
   'RESPONSÁVEL',
   'SITUAÇÃO',
+  'STATUS DO ÚLTIMO REGISTRO',
   'MOTIVO DO IMPEDIMENTO',
   'OBSERVAÇÃO',
   'REGISTRADO POR',
@@ -132,6 +133,15 @@ function statusLabel(status: OrderStatus): string {
   return 'Pendente';
 }
 
+function latestRegistrationStatus(order: Order): OrderStatus | undefined {
+  return order.situacaoRegistro || (order.status === 'impedimento' || order.status === 'executada' ? order.status : undefined);
+}
+
+function registrationStatusLabel(order: Order): string {
+  const status = latestRegistrationStatus(order);
+  return status ? statusLabel(status) : 'Sem registro';
+}
+
 function normalizeHeader(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 }
@@ -170,7 +180,7 @@ function columnsForTeam(orders: Order[]): string[] {
     const quantityIndex = normalized.findIndex((value) => value.startsWith('QTD') || value.startsWith('QUANT'));
     columns.splice(quantityIndex >= 0 ? quantityIndex + 1 : 3, 0, 'QTD EXECUTADA');
   }
-  ['SITUAÇÃO', 'MOTIVO DO IMPEDIMENTO', 'OBSERVAÇÃO', 'REGISTRADO POR', 'DATA DO REGISTRO', 'PROTOCOLO'].forEach((column) => {
+  ['SITUAÇÃO', 'STATUS DO ÚLTIMO REGISTRO', 'MOTIVO DO IMPEDIMENTO', 'OBSERVAÇÃO', 'REGISTRADO POR', 'DATA DO REGISTRO', 'PROTOCOLO'].forEach((column) => {
     if (!columns.map(normalizeHeader).includes(normalizeHeader(column))) columns.push(column);
   });
   return columns;
@@ -188,6 +198,7 @@ export async function exportOrdersByTeam(orders: Order[], fileName = 'ordens-exe
       columns.forEach((header) => {
         const normalized = normalizeHeader(header);
         if (normalized === 'SITUACAO') row[header] = statusLabel(order.status);
+        else if (normalized === 'STATUS DO ULTIMO REGISTRO') row[header] = registrationStatusLabel(order);
         else if (normalized === 'MOTIVO DO IMPEDIMENTO') row[header] = order.motivoImpedimento ?? '';
         else if (normalized === 'OBSERVACAO') row[header] = order.observacao ?? '';
         else if (normalized === 'REGISTRADO POR') row[header] = order.registradoPor ?? '';
@@ -229,6 +240,7 @@ const controlColumns = [
   'QTD EXECUTADA',
   'QTD CONSIDERADA',
   'SITUAÇÃO DA EXECUÇÃO',
+  'STATUS DO ÚLTIMO REGISTRO',
   'MOTIVO DO IMPEDIMENTO',
   'OBSERVAÇÃO',
   'REGISTRADO POR',
@@ -287,6 +299,7 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
       if (key === 'EQUIPE') return order.equipe || 'Sem equipe';
       if (key === 'EMPRESA') return order.empresa || 'Sem empresa';
       if (key === 'SITUACAO DA EXECUCAO') return statusLabel(order.status);
+      if (key === 'STATUS DO ULTIMO REGISTRO') return registrationStatusLabel(order);
       if (key === 'MOTIVO DO IMPEDIMENTO') return order.motivoImpedimento ?? '';
       if (key === 'OBSERVACAO') return order.observacao ?? '';
       if (key === 'REGISTRADO POR') return order.registradoPor ?? '';
@@ -302,6 +315,7 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
   const adjustedIndex = columns.findIndex((header) => normalizeHeader(header) === 'QTD AJUSTADA');
   const executedIndex = columns.findIndex((header) => normalizeHeader(header) === 'QTD EXECUTADA');
   const statusColumnIndex = columns.findIndex((header) => normalizeHeader(header) === 'SITUACAO DA EXECUCAO');
+  const registrationStatusIndex = columns.findIndex((header) => normalizeHeader(header) === 'STATUS DO ULTIMO REGISTRO');
   orders.forEach((order, index) => {
     const rowNumber = index + 2;
     const executed = order.qtdExecutada ?? 0;
@@ -328,9 +342,10 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
   const executedRange = range(executedIndex);
   const consideredRange = range(quantityIndex);
   const statusRange = range(statusColumn);
+  const registrationStatusRange = range(registrationStatusIndex);
   const total = orders.length;
   const completed = orders.filter((order) => order.status === 'executada').length;
-  const blocked = orders.filter((order) => order.status === 'impedimento').length;
+  const blocked = orders.filter((order) => latestRegistrationStatus(order) === 'impedimento').length;
   const pending = orders.filter((order) => order.status === 'pendente').length;
   const plannedQuantity = orders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
   const reportedQuantity = orders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
@@ -347,12 +362,12 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
     ['Quantidade informada pelas equipes', ''],
     ['Quantidade considerada', ''],
     [],
-    ['A quantidade considerada soma a QTD EXECUTADA informada pela equipe nas ordens executadas. Quando ficar abaixo da QTD. AJUSTADA, a observação deve justificar a diferença.'],
+    ['Impedimentos são tentativas registradas; essas ordens continuam pendentes até uma execução. A quantidade considerada soma a QTD EXECUTADA das ordens executadas.'],
   ];
   const presentation = formulaSheet(XLSX, presentationRows, [42, 20]);
   formulaCell(presentation, 'B3', `COUNTIF(${statusRange},"<>")`, total);
   formulaCell(presentation, 'B4', `COUNTIF(${statusRange},"Executada")`, completed);
-  formulaCell(presentation, 'B5', `COUNTIF(${statusRange},"Impedimento")`, blocked);
+  formulaCell(presentation, 'B5', `COUNTIF(${registrationStatusRange},"Impedimento")`, blocked);
   formulaCell(presentation, 'B6', `COUNTIF(${statusRange},"Pendente")`, pending);
   formulaCell(presentation, 'B7', 'IF(B3=0,0,B4/B3)', total ? completed / total : 0, '0%');
   formulaCell(presentation, 'B8', `SUM(${adjustedRange})`, plannedQuantity, '0.##');
@@ -370,13 +385,15 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
     const teamCriteria = `$A${rowNumber}`;
     const teamRange = range(teamColumn);
     const teamOrders = orders.filter((order) => (order.equipe || 'Sem equipe') === team);
-    const countStatus = (status: OrderStatus) => teamOrders.filter((order) => order.status === status).length;
+    const countStatus = (status: OrderStatus) => teamOrders.filter((order) => status === 'impedimento'
+      ? latestRegistrationStatus(order) === status
+      : order.status === status).length;
     const teamPlanned = teamOrders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
     const teamReported = teamOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
     const teamConsidered = teamOrders.reduce((sum, order) => sum + (order.status === 'executada' ? order.qtdExecutada ?? 0 : 0), 0);
     formulaCell(byTeam, `B${rowNumber}`, `COUNTIF(${teamRange},${teamCriteria})`, teamOrders.length);
     formulaCell(byTeam, `C${rowNumber}`, `COUNTIFS(${teamRange},${teamCriteria},${statusRange},"Executada")`, countStatus('executada'));
-    formulaCell(byTeam, `D${rowNumber}`, `COUNTIFS(${teamRange},${teamCriteria},${statusRange},"Impedimento")`, countStatus('impedimento'));
+    formulaCell(byTeam, `D${rowNumber}`, `COUNTIFS(${teamRange},${teamCriteria},${registrationStatusRange},"Impedimento")`, countStatus('impedimento'));
     formulaCell(byTeam, `E${rowNumber}`, `COUNTIFS(${teamRange},${teamCriteria},${statusRange},"Pendente")`, countStatus('pendente'));
     formulaCell(byTeam, `F${rowNumber}`, `IF(B${rowNumber}=0,0,C${rowNumber}/B${rowNumber})`, teamOrders.length ? countStatus('executada') / teamOrders.length : 0, '0%');
     formulaCell(byTeam, `G${rowNumber}`, `SUMIF(${teamRange},${teamCriteria},${adjustedRange})`, teamPlanned, '0.##');
@@ -412,12 +429,14 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
     })).values()];
     const companyCriteriaTerms = sourceCompanies.map((value) => `"${value.replace(/"/g, '""')}"`);
     const countFormula = (status?: OrderStatus) => companyCriteriaTerms.map((companyValue) =>
-      `COUNTIFS(${companyRange},${companyValue},${responsibleRange},${responsibleCriteria}${status ? `,${statusRange},"${statusLabel(status)}"` : ''})`,
+      `COUNTIFS(${companyRange},${companyValue},${responsibleRange},${responsibleCriteria}${status ? `,${status === 'impedimento' ? registrationStatusRange : statusRange},"${statusLabel(status)}"` : ''})`,
     ).join('+');
     const sumFormula = (sumRange: string) => companyCriteriaTerms.map((companyValue) =>
       `SUMIFS(${sumRange},${companyRange},${companyValue},${responsibleRange},${responsibleCriteria})`,
     ).join('+');
-    const countStatus = (status: OrderStatus) => groupOrders.filter((order) => order.status === status).length;
+    const countStatus = (status: OrderStatus) => groupOrders.filter((order) => status === 'impedimento'
+      ? latestRegistrationStatus(order) === status
+      : order.status === status).length;
     const groupPlanned = groupOrders.reduce((sum, order) => sum + (numericQuantity(order.qtdAjustada) ?? 0), 0);
     const groupReported = groupOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
     const groupConsidered = groupOrders.reduce((sum, order) => sum + (order.status === 'executada' ? order.qtdExecutada ?? 0 : 0), 0);

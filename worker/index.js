@@ -128,6 +128,13 @@ function allowedOrder(session, order) {
   return matchesCompany && matchesTeam && matchesResponsible;
 }
 
+function orderWithWorkflowStatus(order) {
+  if (order.status === 'impedimento') {
+    return { ...order, status: 'pendente', situacaoRegistro: order.situacaoRegistro || 'impedimento' };
+  }
+  return order;
+}
+
 async function readOrders(env, session) {
   let statement;
   if (session.isAdmin) statement = env.DB.prepare('SELECT payload_json FROM work_orders ORDER BY id');
@@ -135,7 +142,7 @@ async function readOrders(env, session) {
   else if (normalize(session.responsible)) statement = env.DB.prepare('SELECT payload_json FROM work_orders WHERE responsible = ?1 COLLATE NOCASE ORDER BY id').bind(session.responsible);
   else return [];
   const result = await statement.all();
-  const orders = result.results.map((row) => JSON.parse(row.payload_json));
+  const orders = result.results.map((row) => orderWithWorkflowStatus(JSON.parse(row.payload_json)));
   return session.isAdmin ? orders : orders.filter((order) => allowedOrder(session, order));
 }
 
@@ -162,20 +169,23 @@ async function readState(env, session) {
 
 async function readExecutionNotifications(env, session, afterRevision, throughRevision) {
   const rows = await env.DB.prepare(`SELECT payload_json FROM work_orders
-    WHERE change_revision > ?1 AND change_revision <= ?2 AND status IN ('executada', 'impedimento')
+    WHERE change_revision > ?1 AND change_revision <= ?2
     ORDER BY change_revision, id`).bind(afterRevision, throughRevision).all();
 
   return rows.results.map((row) => JSON.parse(row.payload_json))
-    .filter((order) => order.protocolo && order.dataRegistro && (
-      session.isAdmin || canonicalCompany(order.empresa) === canonicalProfileKind(session.kind)
-    ))
+    .filter((order) => {
+      const registrationStatus = order.situacaoRegistro || order.status;
+      return order.protocolo && order.dataRegistro && ['executada', 'impedimento'].includes(registrationStatus) && (
+        session.isAdmin || canonicalCompany(order.empresa) === canonicalProfileKind(session.kind)
+      );
+    })
     .map((order) => ({
       id: String(order.protocolo),
       orderNumber: String(order.numConsequencia || ''),
       team: String(order.equipe || ''),
       service: String(order.servico || ''),
       registeredBy: String(order.registradoPor || ''),
-      status: order.status,
+      status: order.situacaoRegistro || order.status,
       ...(Number.isFinite(Number(order.qtdExecutada)) ? { quantity: Number(order.qtdExecutada) } : {}),
       occurredAt: String(order.dataRegistro),
       protocol: String(order.protocolo),
@@ -211,7 +221,7 @@ async function readIncrementalState(env, session, url) {
   } else {
     return { orders: [], profiles: [], imports: [], notifications, sync: cursor, full: false, unchanged: notifications.length === 0 };
   }
-  const orders = result.results.map((row) => JSON.parse(row.payload_json)).filter((order) => allowedOrder(session, order));
+  const orders = result.results.map((row) => orderWithWorkflowStatus(JSON.parse(row.payload_json))).filter((order) => allowedOrder(session, order));
   return { orders, profiles: [], imports: [], notifications, sync: cursor, full: false, unchanged: orders.length === 0 && notifications.length === 0 };
 }
 
@@ -480,7 +490,7 @@ async function updateExecution(request, env, session) {
   if (!row) return json({ error: 'Ordem não encontrada.' }, 404);
   const order = JSON.parse(row.payload_json);
   if (!allowedOrder(session, order)) return json({ error: 'Esta ordem não está vinculada ao seu acesso.' }, 403);
-  if (order.status !== 'pendente') return json({ error: 'Esta ordem já foi atualizada por outra equipe. Atualize a lista para conferir.' }, 409);
+  if (!['pendente', 'impedimento'].includes(order.status)) return json({ error: 'Esta ordem já foi executada por outra equipe. Atualize a lista para conferir.' }, 409);
 
   const status = body.status === 'impedimento' ? 'impedimento' : 'executada';
   const quantity = status === 'executada' ? Number(body.qtdExecutada) : null;
@@ -505,9 +515,11 @@ async function updateExecution(request, env, session) {
     photoUrl = `/api/photos/${encodeURIComponent(protocol)}`;
   }
 
+  const workflowStatus = status === 'impedimento' ? 'pendente' : 'executada';
   const updated = {
     ...order,
-    status,
+    status: workflowStatus,
+    situacaoRegistro: status,
     qtdExecutada: status === 'executada' ? quantity : undefined,
     observacao: observation,
     motivoImpedimento: reason || undefined,
@@ -516,24 +528,25 @@ async function updateExecution(request, env, session) {
     registradoPor: session.operatorName,
     dataRegistro: now,
   };
+  const executionRecord = { ...updated, status, situacaoRegistro: status };
   const statements = [
     env.DB.prepare(`UPDATE sync_metadata SET change_revision = change_revision + 1
-      WHERE id = 1 AND EXISTS (SELECT 1 FROM work_orders WHERE id = ?1 AND status = 'pendente')`).bind(orderId),
+      WHERE id = 1 AND EXISTS (SELECT 1 FROM work_orders WHERE id = ?1 AND status IN ('pendente', 'impedimento'))`).bind(orderId),
     env.DB.prepare(`UPDATE work_orders SET status = ?1, payload_json = ?2, updated_at = ?3,
       change_revision = (SELECT change_revision FROM sync_metadata WHERE id = 1)
-      WHERE id = ?4 AND status = 'pendente'`).bind(status, JSON.stringify(updated), now, orderId),
+      WHERE id = ?4 AND status IN ('pendente', 'impedimento')`).bind(workflowStatus, JSON.stringify(updated), now, orderId),
   ];
 
   if (photoData) {
     statements.push(env.DB.prepare(`INSERT INTO photos(protocol, content_type, data_base64, team, responsible, created_at)
       SELECT ?1, ?2, ?3, ?4, ?5, ?6
       WHERE EXISTS (SELECT 1 FROM work_orders WHERE id = ?7 AND status = ?8 AND json_extract(payload_json, '$.protocolo') = ?1)`)
-      .bind(protocol, photoContentType, photoBase64, order.equipe || '', order.responsavel || '', now, orderId, status));
+      .bind(protocol, photoContentType, photoBase64, order.equipe || '', order.responsavel || '', now, orderId, workflowStatus));
   }
   statements.push(env.DB.prepare(`INSERT INTO execution_records(id, protocol, order_id, team, responsible, registered_by, status, payload_json, created_at)
     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
-    WHERE EXISTS (SELECT 1 FROM work_orders WHERE id = ?3 AND status = ?7 AND json_extract(payload_json, '$.protocolo') = ?2)`)
-    .bind(crypto.randomUUID(), protocol, orderId, order.equipe || '', order.responsavel || '', session.operatorName, status, JSON.stringify(updated), now));
+    WHERE EXISTS (SELECT 1 FROM work_orders WHERE id = ?3 AND status = ?10 AND json_extract(payload_json, '$.protocolo') = ?2)`)
+    .bind(crypto.randomUUID(), protocol, orderId, order.equipe || '', order.responsavel || '', session.operatorName, status, JSON.stringify(executionRecord), now, workflowStatus));
 
   const result = await env.DB.batch(statements);
   if (!result[1]?.meta?.changes) return json({ error: 'Outra equipe acabou de atualizar esta ordem. Atualize a lista.' }, 409);

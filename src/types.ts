@@ -28,6 +28,7 @@ export interface Order {
   responsavel: string;
   endereco?: string;
   status: OrderStatus;
+  situacaoRegistro?: Exclude<OrderStatus, 'pendente'>;
   observacao?: string;
   motivoImpedimento?: string;
   foto?: string;

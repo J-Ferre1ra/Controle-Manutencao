@@ -91,6 +91,14 @@ function statusText(status: OrderStatus): string {
   return 'Pendente';
 }
 
+function reportedStatus(order: Pick<Order, 'status' | 'situacaoRegistro'>): OrderStatus {
+  return order.situacaoRegistro || order.status;
+}
+
+function hasReportedImpediment(order: Pick<Order, 'status' | 'situacaoRegistro'>): boolean {
+  return reportedStatus(order) === 'impedimento';
+}
+
 function Brand({ small = false }: { small?: boolean }) {
   return (
     <div className={'brand' + (small ? ' brand-small' : '')} aria-label="Neoenergia">
@@ -102,6 +110,46 @@ function Brand({ small = false }: { small?: boolean }) {
 
 function StatusBadge({ status }: { status: OrderStatus }) {
   return <span className={'status-badge status-' + status}>{statusText(status)}</span>;
+}
+
+function PhotoEvidence({ photo, orderNumber }: { photo: string; orderNumber: string }) {
+  return (
+    <a className="evidence-link" href={photo} target="_blank" rel="noreferrer" aria-label={`Abrir foto da ordem ${orderNumber}`}>
+      <img src={photo} alt={`Evidência fotográfica da ordem ${orderNumber}`} loading="lazy" />
+      <span>Abrir foto</span>
+    </a>
+  );
+}
+
+async function prepareEvidencePhoto(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Não foi possível preparar a imagem.');
+    for (const maxDimension of [1600, 1280, 1000]) {
+      const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      for (const quality of [0.82, 0.68]) {
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Não foi possível preparar a imagem.')), 'image/jpeg', quality);
+        });
+        if (blob.size <= 1200 * 1024) {
+          return await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Não foi possível ler a imagem.'));
+            reader.readAsDataURL(blob);
+          });
+        }
+      }
+    }
+  } finally {
+    bitmap.close();
+  }
+  throw new Error('A imagem é muito grande. Escolha outra foto.');
 }
 
 function ExecutionNotificationStack({ items, onDismiss }: { items: ExecutionNotification[]; onDismiss: (id: string) => void }) {
@@ -465,11 +513,12 @@ function FieldApp({
   const [observation, setObservation] = useState('');
   const [reason, setReason] = useState('');
   const [photo, setPhoto] = useState('');
+  const [photoLoading, setPhotoLoading] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
   const hasUnsavedDraft = page === 'registro' && (
-    quantity !== null || observation.trim().length > 0 || reason.length > 0 || photo.length > 0
+    quantity !== null || observation.trim().length > 0 || reason.length > 0 || photo.length > 0 || photoLoading
   );
 
   useEffect(() => {
@@ -517,21 +566,26 @@ function FieldApp({
     setObservation('');
     setReason('');
     setPhoto('');
+    setPhotoLoading(false);
     setError('');
     setPage('registro');
   }
 
-  function handlePhoto(event: ChangeEvent<HTMLInputElement>) {
+  async function handlePhoto(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
     const file = event.target.files?.[0];
     if (!file) return;
-    if (file.size > 1200 * 1024) {
-      setError('A imagem deve ter até 1,2 MB.');
-      event.target.value = '';
-      return;
+    input.value = '';
+    setError('');
+    setPhotoLoading(true);
+    try {
+      setPhoto(await prepareEvidencePhoto(file));
+    } catch (photoError) {
+      setPhoto('');
+      setError(photoError instanceof Error ? photoError.message : 'Não foi possível preparar essa foto. Tente outra imagem.');
+    } finally {
+      setPhotoLoading(false);
     }
-    const reader = new FileReader();
-    reader.onload = () => setPhoto(String(reader.result || ''));
-    reader.readAsDataURL(file);
   }
 
   async function saveExecution() {
@@ -598,10 +652,10 @@ function FieldApp({
             <Detail label="Responsável" value={lastSaved.responsavel || '—'} />
             <Detail label="Registrado por" value={lastSaved.registradoPor || '—'} />
             <Detail label="Quantidade" value={lastSaved.qtdExecutada === undefined ? 'Sem execução (impedimento)' : lastSaved.qtdExecutada + ' realizada(s)'} />
-            <Detail label="Situação" value={statusText(lastSaved.status)} />
+            <Detail label="Situação" value={statusText(reportedStatus(lastSaved))} />
             <Detail label="Data" value={formatDate(lastSaved.dataRegistro)} />
           </section>
-          <button className="button button-primary button-full" onClick={() => { setPage('lista'); setTab('executadas'); }}>Voltar às ordens</button>
+          <button className="button button-primary button-full" onClick={() => { setPage('lista'); setTab(lastSaved.status === 'pendente' ? 'pendentes' : 'executadas'); }}>Voltar às ordens</button>
           <p className="small-note">Guarde o número para consulta e conferência posterior.</p>
         </div>
       </main>
@@ -656,16 +710,16 @@ function FieldApp({
               </label>
               <label className="photo-upload">
                 <span className="photo-icon">+</span>
-                <span><strong>{photo ? 'Foto adicionada' : 'Adicionar foto de constatação'}</strong><small>Use somente como evidência do impedimento.</small></span>
-                <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} />
+                <span><strong>{photoLoading ? 'Preparando foto…' : photo ? 'Foto adicionada' : 'Adicionar foto de constatação'}</strong><small>Escolha a câmera ou uma imagem da galeria.</small></span>
+                <input type="file" accept="image/*" onChange={handlePhoto} />
               </label>
               {photo && <img className="photo-preview" src={photo} alt="Prévia da foto de constatação" />}
             </>
           )}
 
           {error && <div className="inline-error" role="alert">{error}</div>}
-          <button className="button button-primary button-full" onClick={saveExecution}>
-            {executionMode === 'impedimento' ? 'Registrar impedimento' : 'Salvar e gerar protocolo'}
+          <button className="button button-primary button-full" onClick={saveExecution} disabled={saving || photoLoading}>
+            {photoLoading ? 'Preparando foto…' : saving ? 'Salvando…' : executionMode === 'impedimento' ? 'Registrar impedimento' : 'Salvar e gerar protocolo'}
           </button>
           <p className="small-note">O registro inclui responsável, equipe, data e horário.</p>
         </div>
@@ -706,6 +760,14 @@ function FieldApp({
                 <span>Previsto: <strong>{order.qtdAjustada || '—'}</strong></span>
                 <span>Alimentador: <strong>{order.alimentador || '—'}</strong></span>
               </div>
+              {hasReportedImpediment(order) && (
+                <div className="field-impediment-note">
+                  <strong>Impedimento registrado; a ordem continua pendente.</strong>
+                  {order.motivoImpedimento && <span>{order.motivoImpedimento}</span>}
+                  {order.observacao && <span>{order.observacao}</span>}
+                  {order.foto && <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} />}
+                </div>
+              )}
               {tab === 'pendentes' ? (
                 <button className="button button-primary button-full" onClick={() => openOrder(order)}>Registrar execução</button>
               ) : (
@@ -789,10 +851,10 @@ function AdminApp({
   }, [createdProfile]);
   const filteredOrders = useMemo(() => orders.filter((order) => {
     const searchValue = normalize(search);
-    const textMatch = !searchValue || [order.numConsequencia, order.equipe, order.servico, order.protocolo, order.responsavel]
+    const textMatch = !searchValue || [order.numConsequencia, order.equipe, order.servico, order.protocolo, order.responsavel, order.motivoImpedimento, order.observacao]
       .some((value) => normalize(value || '').includes(searchValue));
     const teamMatch = !teamFilter || order.equipe === teamFilter;
-    const statusMatch = !statusFilter || order.status === statusFilter;
+    const statusMatch = !statusFilter || (statusFilter === 'impedimento' ? hasReportedImpediment(order) : order.status === statusFilter);
     const serviceMatch = !serviceFilter || order.servico === serviceFilter;
     return textMatch && teamMatch && statusMatch && serviceMatch;
   }), [orders, search, teamFilter, statusFilter, serviceFilter]);
@@ -891,7 +953,7 @@ function Dashboard({
   setPage: (page: AdminPage) => void;
 }) {
   const executed = orders.filter((order) => order.status === 'executada').length;
-  const impediments = orders.filter((order) => order.status === 'impedimento').length;
+  const impediments = orders.filter(hasReportedImpediment).length;
   const teams = [...new Set(orders.map((order) => order.equipe).filter((team) => Boolean(team) && !isCancelOrderValue(team)))];
   const teamStats = teams.map((team) => {
     const assigned = orders.filter((order) => order.equipe === team);
@@ -920,7 +982,7 @@ function Dashboard({
       <section className="stats-grid">
         <StatCard title="Ordens importadas" value={orders.length.toLocaleString('pt-BR')} detail="na carteira ativa" />
         <StatCard title="Executadas" value={executed.toLocaleString('pt-BR')} detail="no período selecionado" tone="success" onClick={() => quickFilter('executada')} />
-        <StatCard title="Impedimentos" value={impediments.toLocaleString('pt-BR')} detail="para análise interna" tone="warning" onClick={() => quickFilter('impedimento')} />
+        <StatCard title="Impedimentos" value={impediments.toLocaleString('pt-BR')} detail="ordens que seguem pendentes" tone="warning" onClick={() => quickFilter('impedimento')} />
         <StatCard title="Equipes ativas" value={teams.length.toLocaleString('pt-BR')} detail="com ordens liberadas" />
       </section>
 
@@ -955,8 +1017,9 @@ function Dashboard({
 
 function ControlPage({ orders }: { orders: Order[] }) {
   const executed = orders.filter((order) => order.status === 'executada').length;
-  const impediments = orders.filter((order) => order.status === 'impedimento').length;
+  const impediments = orders.filter(hasReportedImpediment).length;
   const pending = orders.filter((order) => order.status === 'pendente').length;
+  const pendingWithoutImpediment = Math.max(0, pending - impediments);
   const total = orders.length;
   const executedPercent = total ? executed / total * 100 : 0;
   const impedimentEnd = total ? (executed + impediments) / total * 100 : 0;
@@ -1007,21 +1070,21 @@ function ControlPage({ orders }: { orders: Order[] }) {
       <section className="control-metrics">
         <div className="control-metric"><span>Ordens na carteira</span><strong>{total.toLocaleString('pt-BR')}</strong><small>base atual</small></div>
         <div className="control-metric"><span>Executadas</span><strong className="metric-success">{executed.toLocaleString('pt-BR')}</strong><small>{Math.round(executedPercent)}% da carteira</small></div>
-        <div className="control-metric"><span>Impedimentos</span><strong className="metric-warning">{impediments.toLocaleString('pt-BR')}</strong><small>precisam de análise</small></div>
-        <div className="control-metric"><span>Pendentes</span><strong>{pending.toLocaleString('pt-BR')}</strong><small>aguardando execução</small></div>
+        <div className="control-metric"><span>Com impedimento</span><strong className="metric-warning">{impediments.toLocaleString('pt-BR')}</strong><small>continuam pendentes</small></div>
+        <div className="control-metric"><span>Pendentes</span><strong>{pending.toLocaleString('pt-BR')}</strong><small>inclui as com impedimento</small></div>
       </section>
 
       <section className="control-chart-grid">
         <div className="panel">
           <div className="panel-heading"><div><h2>Situação das ordens</h2><p className="muted">Distribuição da carteira atual</p></div></div>
           <div className="status-chart-layout">
-            <div className="status-donut" role="img" aria-label={`${executed} executadas, ${impediments} com impedimento e ${pending} pendentes`} style={{ background: donutBackground }}>
+            <div className="status-donut" role="img" aria-label={`${executed} executadas, ${impediments} pendentes com impedimento e ${pendingWithoutImpediment} outras pendentes`} style={{ background: donutBackground }}>
               <div className="status-donut-center"><strong>{total ? Math.round(executedPercent) + '%' : '—'}</strong><span>executadas</span></div>
             </div>
             <div className="status-legend">
               <div className="status-legend-item"><span><i className="status-dot dot-executed" />Executadas</span><strong>{executed}</strong></div>
-              <div className="status-legend-item"><span><i className="status-dot dot-impediment" />Impedimentos</span><strong>{impediments}</strong></div>
-              <div className="status-legend-item"><span><i className="status-dot dot-pending" />Pendentes</span><strong>{pending}</strong></div>
+              <div className="status-legend-item"><span><i className="status-dot dot-impediment" />Pendentes com impedimento</span><strong>{impediments}</strong></div>
+              <div className="status-legend-item"><span><i className="status-dot dot-pending" />Outras pendentes</span><strong>{pendingWithoutImpediment}</strong></div>
             </div>
           </div>
         </div>
@@ -1095,16 +1158,18 @@ function OrderTable({ orders }: { orders: Order[] }) {
   return (
     <div className="table-scroll">
       <table className="admin-table">
-        <thead><tr><th>OS</th><th>Equipe</th><th>Serviço</th><th>Previsto</th><th>Executado</th><th>Situação</th><th>Protocolo</th></tr></thead>
+        <thead><tr><th>OS</th><th>Equipe</th><th>Serviço</th><th>Previsto</th><th>Executado</th><th>Situação</th><th>Protocolo</th><th>Problema relatado</th><th>Evidência</th></tr></thead>
         <tbody>
           {orders.map((order) => (
             <tr key={order.id}>
               <td>OS {order.numConsequencia}</td><td>{order.equipe}</td><td>{order.servico}</td><td>{order.qtdAjustada || '—'}</td>
               <td>{order.qtdExecutada === undefined ? '—' : order.qtdExecutada + (quantityUnit(order.qtdAjustada) ? ' ' + quantityUnit(order.qtdAjustada) : '')}</td>
               <td><StatusBadge status={order.status} /></td><td>{order.protocolo || '—'}</td>
+              <td className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td>
+              <td>{hasReportedImpediment(order) && order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td>
             </tr>
           ))}
-          {orders.length === 0 && <tr><td colSpan={7} className="table-empty">Nenhuma ordem para exibir.</td></tr>}
+          {orders.length === 0 && <tr><td colSpan={9} className="table-empty">Nenhuma ordem para exibir.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -1383,8 +1448,8 @@ function ProtocolsPage({ orders }: { orders: Order[] }) {
     <main className="admin-content">
       <section className="panel orders-panel">
         <div className="panel-heading"><div><h2>Registros de auditoria</h2><p className="muted">Execuções e impedimentos enviados pelas equipes.</p></div><span className="count-chip">{recorded.length} protocolos</span></div>
-        <div className="table-scroll"><table className="admin-table protocols-table"><thead><tr><th>Protocolo</th><th>Ordem</th><th>Equipe</th><th>Responsável</th><th>Registrado por</th><th>Situação</th><th>Evidência</th><th>Data</th></tr></thead>
-          <tbody>{recorded.map((order) => <tr key={order.id}><td className="protocol-cell">{order.protocolo}</td><td>{order.numConsequencia}</td><td>{order.equipe}</td><td>{order.responsavel || '—'}</td><td>{order.registradoPor || '—'}</td><td><StatusBadge status={order.status} /></td><td>{order.foto ? <a className="table-action" href={order.foto} target="_blank" rel="noreferrer">Ver foto</a> : '—'}</td><td>{formatDate(order.dataRegistro)}</td></tr>)}{recorded.length === 0 && <tr><td colSpan={8} className="table-empty">Nenhum protocolo registrado.</td></tr>}</tbody>
+        <div className="table-scroll"><table className="admin-table protocols-table"><thead><tr><th>Protocolo</th><th>Ordem</th><th>Equipe</th><th>Responsável</th><th>Registrado por</th><th>Resultado do registro</th><th>Problema relatado</th><th>Evidência</th><th>Data</th></tr></thead>
+          <tbody>{recorded.map((order) => <tr key={order.id}><td className="protocol-cell">{order.protocolo}</td><td>{order.numConsequencia}</td><td>{order.equipe}</td><td>{order.responsavel || '—'}</td><td>{order.registradoPor || '—'}</td><td><StatusBadge status={reportedStatus(order)} /></td><td className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td><td>{order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td><td>{formatDate(order.dataRegistro)}</td></tr>)}{recorded.length === 0 && <tr><td colSpan={9} className="table-empty">Nenhum protocolo registrado.</td></tr>}</tbody>
         </table></div>
         <div className="protocol-footnote">Cada protocolo conserva a identificação da ordem, equipe, responsável, operador e horário do registro.</div>
       </section>
