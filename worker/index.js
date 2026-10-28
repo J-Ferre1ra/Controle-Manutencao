@@ -521,6 +521,9 @@ async function addSupplementalOrders(request, env) {
 async function updateExecution(request, env, session) {
   if (session.isAdmin) return json({ error: 'Use a tela de administração para alterar as ordens.' }, 403);
   const body = await request.json();
+  if (body.status !== 'executada' && body.status !== 'impedimento') {
+    return json({ error: 'Selecione se a ordem foi executada ou teve um impedimento.' }, 400);
+  }
   const orderId = String(body.orderId || '');
   const row = await env.DB.prepare('SELECT payload_json FROM work_orders WHERE id = ?1').bind(orderId).first();
   if (!row) return json({ error: 'Ordem não encontrada.' }, 404);
@@ -528,7 +531,7 @@ async function updateExecution(request, env, session) {
   if (!allowedOrder(session, order)) return json({ error: 'Esta ordem não está vinculada ao seu acesso.' }, 403);
   if (!['pendente', 'impedimento'].includes(order.status)) return json({ error: 'Esta ordem já foi executada por outra equipe. Atualize a lista para conferir.' }, 409);
 
-  const status = body.status === 'impedimento' ? 'impedimento' : 'executada';
+  const status = body.status;
   const quantity = status === 'executada' ? Number(body.qtdExecutada) : null;
   if (status === 'executada' && (!Number.isFinite(quantity) || quantity < 0)) return json({ error: 'Informe uma quantidade válida.' }, 400);
   const observation = String(body.observacao || '').trim();
