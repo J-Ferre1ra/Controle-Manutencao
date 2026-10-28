@@ -388,6 +388,42 @@ async function saveAdminState(request, env) {
   return json({ saved: true });
 }
 
+async function clearAdminPortfolio(request, env) {
+  const body = await request.json();
+  const expectedCatalogRevision = Number(body.expectedSync?.catalogRevision);
+  const expectedChangeRevision = Number(body.expectedSync?.changeRevision);
+  if (!Number.isSafeInteger(expectedCatalogRevision) || expectedCatalogRevision < 0 ||
+      !Number.isSafeInteger(expectedChangeRevision) || expectedChangeRevision < 0) {
+    return json({ error: 'Exporte a carteira novamente antes de excluí-la.' }, 400);
+  }
+
+  const nextCatalogRevision = expectedCatalogRevision + 1;
+  const nextChangeRevision = expectedChangeRevision + 1;
+  const result = await env.DB.batch([
+    env.DB.prepare(`DELETE FROM work_orders
+      WHERE EXISTS (SELECT 1 FROM sync_metadata WHERE id = 1 AND catalog_revision = ?1 AND change_revision = ?2)`)
+      .bind(expectedCatalogRevision, expectedChangeRevision),
+    env.DB.prepare(`UPDATE sync_metadata
+      SET catalog_revision = catalog_revision + 1, change_revision = change_revision + 1
+      WHERE id = 1 AND catalog_revision = ?1 AND change_revision = ?2 AND changes() > 0`)
+      .bind(expectedCatalogRevision, expectedChangeRevision),
+  ]);
+
+  const deletedCount = Number(result[0]?.meta?.changes || 0);
+  if (deletedCount === 0 || !result[1]?.meta?.changes) {
+    const current = await readSyncCursor(env);
+    if (current.catalogRevision !== expectedCatalogRevision || current.changeRevision !== expectedChangeRevision) {
+      return json({ error: 'A carteira mudou depois da exportação. Exporte a versão atual novamente antes de excluí-la.' }, 409);
+    }
+    return json({ error: 'Não há ordens ativas para excluir.' }, 409);
+  }
+
+  return json({
+    deletedCount,
+    sync: { catalogRevision: nextCatalogRevision, changeRevision: nextChangeRevision },
+  });
+}
+
 async function addSupplementalOrders(request, env) {
   const body = await request.json();
   const incoming = Array.isArray(body.orders) ? body.orders : [];
@@ -593,6 +629,16 @@ async function route(request, env) {
       const detail = error instanceof Error ? error.message : String(error);
       console.error('Admin state save failed:', error);
       return json({ error: `Falha ao salvar no servidor: ${detail.slice(0, 240)}` }, 500);
+    }
+  }
+  if (path === '/api/admin/orders/clear' && request.method === 'POST') {
+    if (!session.isAdmin) return json({ error: 'Apenas o supervisor pode excluir a carteira.' }, 403);
+    try {
+      return await clearAdminPortfolio(request, env);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error('Admin portfolio clear failed:', error);
+      return json({ error: `Falha ao excluir a carteira: ${detail.slice(0, 240)}` }, 500);
     }
   }
   if (path === '/api/admin/orders/import' && request.method === 'POST') {

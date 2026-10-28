@@ -57,6 +57,7 @@ function parseQuantity(value: string): number {
 type AdminSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 type SupplementalImportInput = { fileName: string; sheetName: string; sourceColumns: string[]; orders: Omit<Order, 'id' | 'status'>[] };
 type SupplementalImportResult = { addedCount: number; duplicateCount: number; excludedCount: number; importRecord: ImportRecord; orders: Order[] };
+type PortfolioExportSnapshot = { sync: SyncCursor; orderCount: number };
 
 function isPortfolioSheet(workbook: ParsedWorkbook['workbook'], sheetName: string): boolean {
   const headers = Object.keys(rowsFromSheet(workbook, sheetName)[0]?.values ?? {}).map(normalizeHeader);
@@ -277,6 +278,19 @@ export default function App() {
     return response;
   }
 
+  async function clearCurrentPortfolio(expectedSync: SyncCursor): Promise<void> {
+    const response = await apiRequest<{ deletedCount: number; sync: SyncCursor }>('/api/admin/orders/clear', {
+      method: 'POST',
+      body: JSON.stringify({ expectedSync }),
+    });
+    syncCursor.current = response.sync;
+    adminDirty.current = false;
+    dirtyAdminSections.current.delete('orders');
+    setOrders([]);
+    setAdminSaveError('');
+    setAdminSaveStatus('saved');
+  }
+
   useEffect(() => {
     if (!ready || !adminMode || !adminDirty.current) return;
     const revision = saveRevision;
@@ -362,6 +376,7 @@ export default function App() {
           orders={orders}
           setOrders={updateOrders}
           onImportSupplemental={importSupplementalOrders}
+          onClearPortfolio={clearCurrentPortfolio}
           profiles={profiles}
           setProfiles={updateProfiles}
           imports={imports}
@@ -811,6 +826,7 @@ function AdminApp({
   orders,
   setOrders,
   onImportSupplemental,
+  onClearPortfolio,
   profiles,
   setProfiles,
   imports,
@@ -823,6 +839,7 @@ function AdminApp({
   orders: Order[];
   setOrders: (orders: Order[]) => void;
   onImportSupplemental: (input: SupplementalImportInput) => Promise<SupplementalImportResult>;
+  onClearPortfolio: (expectedSync: SyncCursor) => Promise<void>;
   profiles: AccessProfile[];
   setProfiles: (profiles: AccessProfile[]) => void;
   imports: ImportRecord[];
@@ -865,6 +882,14 @@ function AdminApp({
   function exportPortfolio(): Promise<void> {
     const date = new Date().toISOString().slice(0, 10);
     return exportControlWorkbook(orders, `carteira-completa-neoenergia-${date}.xlsx`);
+  }
+  async function exportPortfolioForReplacement(): Promise<PortfolioExportSnapshot> {
+    const snapshot = await readSharedState();
+    if (!snapshot.sync) throw new Error('Não consegui confirmar a versão atual da carteira. Tente novamente.');
+    if (snapshot.orders.length === 0) throw new Error('Não há ordens ativas para exportar.');
+    const date = new Date().toISOString().slice(0, 10);
+    await exportControlWorkbook(snapshot.orders, `carteira-completa-neoenergia-${date}.xlsx`);
+    return { sync: snapshot.sync, orderCount: snapshot.orders.length };
   }
   return (
     <div className="admin-shell">
@@ -929,7 +954,7 @@ function AdminApp({
             onExport={exportCurrent}
           />
         )}
-        {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} onExportPortfolio={exportPortfolio} onImportSupplemental={onImportSupplemental} />}
+        {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} onExportPortfolio={exportPortfolioForReplacement} onClearPortfolio={onClearPortfolio} onImportSupplemental={onImportSupplemental} saveStatus={saveStatus} />}
         {page === 'protocolos' && <ProtocolsPage orders={orders} />}
         {page === 'acessos' && <AccessPage orders={orders} profiles={profiles} setProfiles={setProfiles} saveStatus={saveStatus} saveError={saveError} onRetrySave={onRetrySave} created={createdProfile} setCreated={setCreatedProfile} />}
       </div>
@@ -1222,22 +1247,28 @@ function ImportPage({
   imports,
   setImports,
   onExportPortfolio,
+  onClearPortfolio,
   onImportSupplemental,
+  saveStatus,
 }: {
   orders: Order[];
   setOrders: (orders: Order[]) => void;
   imports: ImportRecord[];
   setImports: (imports: ImportRecord[]) => void;
-  onExportPortfolio: () => Promise<void>;
+  onExportPortfolio: () => Promise<PortfolioExportSnapshot>;
+  onClearPortfolio: (expectedSync: SyncCursor) => Promise<void>;
   onImportSupplemental: (input: SupplementalImportInput) => Promise<SupplementalImportResult>;
+  saveStatus: AdminSaveStatus;
 }) {
   const [file, setFile] = useState<ParsedWorkbook | null>(null);
   const [sheetName, setSheetName] = useState('');
   const [importMode, setImportMode] = useState<'substituir' | 'complementar'>('substituir');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [auditExported, setAuditExported] = useState(false);
+  const [auditSnapshot, setAuditSnapshot] = useState<PortfolioExportSnapshot | null>(null);
+  const [portfolioDeleted, setPortfolioDeleted] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [deletingPortfolio, setDeletingPortfolio] = useState(false);
   const [importing, setImporting] = useState(false);
   const rows = useMemo(() => file && sheetName ? rowsFromSheet(file.workbook, sheetName) : [], [file, sheetName]);
   const orderRows = useMemo(() => rows.map((row) => mapSpreadsheetRow(row, ''))
@@ -1256,7 +1287,6 @@ function ImportPage({
     event.target.value = '';
     setError('');
     setMessage('');
-    setAuditExported(false);
     try {
       const workbook = await readWorkbook(selectedFile);
       const selectedSheet = chooseImportSheet(workbook.workbook);
@@ -1279,16 +1309,43 @@ function ImportPage({
       setError('Ainda não há uma carteira carregada para exportar.');
       return;
     }
+    if (saveStatus === 'saving' || saveStatus === 'error') {
+      setError('Aguarde o salvamento terminar ou corrija a falha antes de exportar a carteira.');
+      return;
+    }
     setExporting(true);
     setError('');
     try {
-      await onExportPortfolio();
-      setAuditExported(true);
-      setMessage('Carteira completa exportada para auditoria. Agora você pode importar a próxima carteira.');
+      const snapshot = await onExportPortfolio();
+      setAuditSnapshot(snapshot);
+      setMessage(`Carteira completa exportada para auditoria (${snapshot.orderCount.toLocaleString('pt-BR')} ordens). Agora o botão de exclusão está liberado.`);
     } catch {
       setError('Não consegui exportar a carteira. Tente novamente antes de substituir os dados do mês.');
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function deleteCurrentPortfolio() {
+    if (!auditSnapshot) return;
+    if (saveStatus === 'saving' || saveStatus === 'error') {
+      setError('Aguarde o salvamento terminar ou corrija a falha antes de excluir a carteira.');
+      return;
+    }
+    const confirmed = window.confirm(`A carteira atual (${auditSnapshot.orderCount.toLocaleString('pt-BR')} ordens) será removida do sistema. Confirme que o arquivo exportado foi baixado e guardado para auditoria. Deseja continuar?`);
+    if (!confirmed) return;
+    setDeletingPortfolio(true);
+    setError('');
+    try {
+      await onClearPortfolio(auditSnapshot.sync);
+      setAuditSnapshot(null);
+      setPortfolioDeleted(true);
+      setMessage('Carteira anterior removida do sistema. Agora selecione e importe a carteira do novo mês.');
+    } catch (deleteError) {
+      setAuditSnapshot(null);
+      setError(deleteError instanceof Error ? deleteError.message : 'Não foi possível excluir a carteira atual.');
+    } finally {
+      setDeletingPortfolio(false);
     }
   }
 
@@ -1333,11 +1390,12 @@ function ImportPage({
       setError('Não encontrei ordens com EMPRESA, EQUIPE e RESPONSÁVEL preenchidos.');
       return;
     }
-    if (orders.length > 0 && !auditExported) {
-      setError('Exporte a carteira completa para auditoria antes de substituir a carteira ativa.');
+    if (orders.length > 0) {
+      setError(auditSnapshot
+        ? 'Use primeiro o botão “Excluir carteira deste mês”; depois importe a nova planilha.'
+        : 'Exporte a carteira completa e exclua a carteira atual antes de importar a próxima.');
       return;
     }
-    if (orders.length > 0 && !window.confirm(`A nova carteira vai substituir as ${orders.length.toLocaleString('pt-BR')} ordens ativas. A carteira atual já foi exportada para auditoria. Deseja continuar?`)) return;
 
     const orderKey = (order: Pick<Order, 'numConsequencia' | 'empresa' | 'responsavel'>) =>
       [normalize(order.numConsequencia), canonicalCompany(order.empresa), normalize(order.responsavel)].join('|');
@@ -1380,7 +1438,8 @@ function ImportPage({
       sheetName,
     };
     setImports([record, ...imports.filter((item) => !item.id.startsWith('import-demo'))]);
-    setAuditExported(false);
+    setAuditSnapshot(null);
+    setPortfolioDeleted(false);
     setMessage(`${nextOrders.length.toLocaleString('pt-BR')} ordens importadas da carteira geral.${excludedRows ? ` ${excludedRows} linha(s) com EMPRESA, EQUIPE ou RESPONSÁVEL vazios foram ignoradas.` : ''}`);
     setError('');
   }
@@ -1394,7 +1453,8 @@ function ImportPage({
             <button type="button" className={importMode === 'substituir' ? 'segment active' : 'segment'} onClick={() => { setImportMode('substituir'); setError(''); setMessage(''); }}>Nova carteira do mês</button>
             <button type="button" className={importMode === 'complementar' ? 'segment active' : 'segment'} onClick={() => { setImportMode('complementar'); setError(''); setMessage(''); }}>Acrescentar ordens</button>
           </div>
-          {importMode === 'substituir' && orders.length > 0 && <div className="security-note"><strong>Troca mensal com cópia de auditoria</strong><span>Exporte a carteira completa antes de carregar a nova. Esta opção substituirá as ordens ativas.</span><button type="button" className="button button-secondary" disabled={exporting} onClick={() => { void exportCurrentPortfolio(); }}>{exporting ? 'Exportando…' : 'Exportar carteira completa'}</button>{auditExported && <span className="success-text">Cópia exportada nesta sessão.</span>}</div>}
+          {importMode === 'substituir' && orders.length > 0 && <div className="security-note"><strong>Troca mensal da carteira</strong><span>1. Exporte e guarde a carteira atual para auditoria. 2. O botão de exclusão será liberado. 3. Exclua a carteira atual e importe a planilha do novo mês.</span><div className="portfolio-action-row"><button type="button" className="button button-secondary" disabled={exporting || saveStatus === 'saving' || saveStatus === 'error'} onClick={() => { void exportCurrentPortfolio(); }}>{exporting ? 'Exportando…' : 'Exportar carteira completa'}</button><button type="button" className="button button-danger" disabled={!auditSnapshot || deletingPortfolio || saveStatus === 'saving' || saveStatus === 'error'} onClick={() => { void deleteCurrentPortfolio(); }}>{deletingPortfolio ? 'Excluindo…' : 'Excluir carteira deste mês'}</button></div>{auditSnapshot && <span className="success-text">Exportação concluída: {auditSnapshot.orderCount.toLocaleString('pt-BR')} ordens. Exclusão liberada.</span>}</div>}
+          {importMode === 'substituir' && orders.length === 0 && portfolioDeleted && <div className="mapping-note"><strong>Carteira anterior excluída</strong><span>Selecione a planilha geral do novo mês e confirme a importação para disponibilizar as ordens às equipes.</span></div>}
           {importMode === 'complementar' && <div className="mapping-note"><strong>Importação complementar</strong><span>As novas ordens serão acrescentadas à carteira atual. As ordens existentes e seus registros serão preservados; números já cadastrados não serão duplicados.</span></div>}
           <label className="upload-dropzone">
             <span className="file-icon">XLSX</span>
@@ -1417,7 +1477,7 @@ function ImportPage({
                 </table></div>
                 {excludedRows > 0 && <p className="table-note">{excludedRows} linha(s) incompleta(s) serão ignoradas{importMode === 'complementar' ? ' por falta de número, empresa, equipe, responsável, serviço ou quantidade ajustada.' : ' por falta de número, empresa, equipe ou responsável.'}</p>}
               </div>
-              <div className="import-actions"><span>{importMode === 'complementar' ? 'Novas linhas precisam ter número, empresa, equipe, responsável, serviço e quantidade.' : 'Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não serão incluídas.'}</span><button className="button button-primary" disabled={importing} onClick={() => { void importRows(); }}>{importing ? 'Importando…' : importMode === 'complementar' ? 'Acrescentar à carteira atual' : 'Validar e substituir carteira'}</button></div>
+              <div className="import-actions"><span>{importMode === 'complementar' ? 'Novas linhas precisam ter número, empresa, equipe, responsável, serviço e quantidade.' : 'Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não serão incluídas.'}</span><button className="button button-primary" disabled={importing || (importMode === 'substituir' && orders.length > 0)} onClick={() => { void importRows(); }}>{importing ? 'Importando…' : importMode === 'complementar' ? 'Acrescentar à carteira atual' : orders.length > 0 ? 'Exclua a carteira atual primeiro' : 'Importar carteira do novo mês'}</button></div>
             </>
           )}
           {message && <div className="inline-success">{message}</div>}

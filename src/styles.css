@@ -46,6 +46,9 @@ h1, h2, h3, p { margin-top: 0; }
 .button-primary:hover { background: var(--green-dark); }
 .button-secondary { color: var(--navy); border-color: #cbdce2; background: #fff; }
 .button-secondary:hover, .button-outline:hover { border-color: var(--blue); background: #f4fafc; }
+.button-danger { color: #9a3426; border-color: #e7bcb4; background: #fff8f6; }
+.button-danger:hover:not(:disabled) { border-color: #c86a59; background: #fff0ec; }
+.button:disabled { cursor: not-allowed; opacity: .55; }
 .button-outline { color: var(--navy); border-color: #c8d9df; background: #fff; }
 .button-ghost { color: #576d77; border-color: transparent; background: transparent; }
 .button-ghost:hover { background: #f0f5f6; }
@@ -342,6 +345,7 @@ h1, h2, h3, p { margin-top: 0; }
 .preview-table { min-width: 580px; }
 .access-panel .panel-heading { align-items: flex-start; }
 .security-note { margin: -2px 0 16px; padding: 11px 13px; }
+.portfolio-action-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 5px; }
 .created-credentials { display: flex; align-items: center; justify-content: space-between; gap: 13px; margin: 0 0 15px; padding: 13px; border: 1px solid #bfe2ce; border-radius: 8px; color: #276445; background: #effaf3; }
 .created-credentials > div { display: grid; gap: 4px; }
 .created-credentials strong { font-size: 15px; }
