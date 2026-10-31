@@ -1187,11 +1187,11 @@ function OrderTable({ orders }: { orders: Order[] }) {
         <tbody>
           {orders.map((order) => (
             <tr key={order.id}>
-              <td>OS {order.numConsequencia}</td><td>{order.equipe}</td><td>{order.servico}</td><td>{order.qtdAjustada || '—'}</td>
-              <td>{order.qtdExecutada === undefined ? '—' : order.qtdExecutada + (quantityUnit(order.qtdAjustada) ? ' ' + quantityUnit(order.qtdAjustada) : '')}</td>
-              <td><StatusBadge status={order.status} /></td><td>{order.protocolo || '—'}</td>
-              <td className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td>
-              <td>{hasReportedImpediment(order) && order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td>
+              <td data-label="OS">OS {order.numConsequencia}</td><td data-label="Equipe">{order.equipe}</td><td data-label="Serviço">{order.servico}</td><td data-label="Previsto">{order.qtdAjustada || '—'}</td>
+              <td data-label="Executado">{order.qtdExecutada === undefined ? '—' : order.qtdExecutada + (quantityUnit(order.qtdAjustada) ? ' ' + quantityUnit(order.qtdAjustada) : '')}</td>
+              <td data-label="Situação"><StatusBadge status={order.status} /></td><td data-label="Protocolo">{order.protocolo || '—'}</td>
+              <td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td>
+              <td data-label="Evidência">{hasReportedImpediment(order) && order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td>
             </tr>
           ))}
           {orders.length === 0 && <tr><td colSpan={9} className="table-empty">Nenhuma ordem para exibir.</td></tr>}
@@ -1473,7 +1473,7 @@ function ImportPage({
                   <small>Mostrando até {Math.min(4, rowsToPreview.length)} de {rowsToPreview.length.toLocaleString('pt-BR')} linhas aceitas. Esta conferência não grava nada.</small>
                 </div>
                 <div className="table-scroll"><table className="admin-table preview-table"><thead><tr><th>Ordem</th><th>Equipe</th><th>Serviço</th><th>Qtd. ajustada</th><th>Responsável</th></tr></thead>
-                  <tbody>{mappedPreview.map((row, index) => <tr key={index}><td>{row.numConsequencia || '—'}</td><td>{row.equipe || '—'}</td><td>{row.servico || '—'}</td><td>{row.qtdAjustada || '—'}</td><td>{row.responsavel || '—'}</td></tr>)}{mappedPreview.length === 0 && <tr><td colSpan={5} className="table-empty">Nenhuma linha atende aos campos obrigatórios.</td></tr>}</tbody>
+                  <tbody>{mappedPreview.map((row, index) => <tr key={index}><td data-label="Ordem">{row.numConsequencia || '—'}</td><td data-label="Equipe">{row.equipe || '—'}</td><td data-label="Serviço">{row.servico || '—'}</td><td data-label="Qtd. ajustada">{row.qtdAjustada || '—'}</td><td data-label="Responsável">{row.responsavel || '—'}</td></tr>)}{mappedPreview.length === 0 && <tr><td colSpan={5} className="table-empty">Nenhuma linha atende aos campos obrigatórios.</td></tr>}</tbody>
                 </table></div>
                 {excludedRows > 0 && <p className="table-note">{excludedRows} linha(s) incompleta(s) serão ignoradas{importMode === 'complementar' ? ' por falta de número, empresa, equipe, responsável, serviço ou quantidade ajustada.' : ' por falta de número, empresa, equipe ou responsável.'}</p>}
               </div>
@@ -1509,7 +1509,7 @@ function ProtocolsPage({ orders }: { orders: Order[] }) {
       <section className="panel orders-panel">
         <div className="panel-heading"><div><h2>Registros de auditoria</h2><p className="muted">Execuções e impedimentos enviados pelas equipes.</p></div><span className="count-chip">{recorded.length} protocolos</span></div>
         <div className="table-scroll"><table className="admin-table protocols-table"><thead><tr><th>Protocolo</th><th>Ordem</th><th>Equipe</th><th>Responsável</th><th>Registrado por</th><th>Resultado do registro</th><th>Problema relatado</th><th>Evidência</th><th>Data</th></tr></thead>
-          <tbody>{recorded.map((order) => <tr key={order.id}><td className="protocol-cell">{order.protocolo}</td><td>{order.numConsequencia}</td><td>{order.equipe}</td><td>{order.responsavel || '—'}</td><td>{order.registradoPor || '—'}</td><td><StatusBadge status={reportedStatus(order)} /></td><td className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td><td>{order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td><td>{formatDate(order.dataRegistro)}</td></tr>)}{recorded.length === 0 && <tr><td colSpan={9} className="table-empty">Nenhum protocolo registrado.</td></tr>}</tbody>
+          <tbody>{recorded.map((order) => <tr key={order.id}><td data-label="Protocolo" className="protocol-cell">{order.protocolo}</td><td data-label="Ordem">{order.numConsequencia}</td><td data-label="Equipe">{order.equipe}</td><td data-label="Responsável">{order.responsavel || '—'}</td><td data-label="Registrado por">{order.registradoPor || '—'}</td><td data-label="Resultado do registro"><StatusBadge status={reportedStatus(order)} /></td><td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td><td data-label="Evidência">{order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td><td data-label="Data">{formatDate(order.dataRegistro)}</td></tr>)}{recorded.length === 0 && <tr><td colSpan={9} className="table-empty">Nenhum protocolo registrado.</td></tr>}</tbody>
         </table></div>
         <div className="protocol-footnote">Cada protocolo conserva a identificação da ordem, equipe, responsável, operador e horário do registro.</div>
       </section>
@@ -1620,7 +1620,7 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
           </form>
         )}
         <div className="table-scroll"><table className="admin-table access-table"><thead><tr><th>Perfil</th><th>Tipo</th><th>Responsável</th><th>Nome auditado</th><th>Código</th><th>Estado</th><th>Ação</th></tr></thead>
-          <tbody>{profiles.map((profile) => <tr key={profile.id}><td><strong>{profile.label}</strong></td><td>{kindLabels[profile.kind]}</td><td>{profile.responsible || profile.team || '—'}</td><td>{profile.operatorName || profile.responsible || profile.label}</td><td><code>{profile.code}</code></td><td><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button></td></tr>)}</tbody>
+          <tbody>{profiles.map((profile) => <tr key={profile.id}><td data-label="Perfil"><strong>{profile.label}</strong></td><td data-label="Tipo">{kindLabels[profile.kind]}</td><td data-label="Responsável">{profile.responsible || profile.team || '—'}</td><td data-label="Nome auditado">{profile.operatorName || profile.responsible || profile.label}</td><td data-label="Código"><code>{profile.code}</code></td><td data-label="Estado"><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td data-label="Ação"><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button></td></tr>)}</tbody>
         </table></div>
         <p className="local-warning">Os perfis e as ordens são salvos no servidor. As senhas são protegidas e não podem ser consultadas depois de criadas.</p>
       </section>
