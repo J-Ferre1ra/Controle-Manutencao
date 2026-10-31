@@ -484,7 +484,7 @@ h1, h2, h3, p { margin-top: 0; }
 @media (max-width: 900px) {
   .admin-sidebar { overflow-y: auto; overscroll-behavior: contain; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
   .admin-main, .admin-content, .panel { min-width: 0; }
-  .admin-topbar { grid-template-columns: 40px minmax(0, 1fr); align-items: center; }
+  .admin-topbar { position: static; grid-template-columns: 40px minmax(0, 1fr); align-items: center; }
   .admin-topbar h1, .admin-topbar p { overflow-wrap: anywhere; }
   .admin-topbar p { max-width: none; }
   .topbar-actions { grid-column: 1 / -1; justify-content: space-between; min-width: 0; }
