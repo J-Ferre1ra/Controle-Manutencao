@@ -493,6 +493,7 @@ h1, h2, h3, p { margin-top: 0; }
 
   .table-scroll { overflow: visible; border: 0; }
   .admin-table { display: block; width: 100%; white-space: normal; }
+  .access-table { min-width: 0; }
   .admin-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
   .admin-table tbody { display: grid; gap: 10px; }
   .admin-table tbody tr { display: block; overflow: hidden; border: 1px solid #dce6ea; border-radius: 9px; background: #fff; box-shadow: 0 2px 7px rgba(0, 47, 70, .035); }
