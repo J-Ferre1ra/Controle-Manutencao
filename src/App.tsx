@@ -907,16 +907,36 @@ function spreadsheetFields(order: Order): [string, string][] {
     Boolean(header.trim() && value.trim()) && !mappedSpreadsheetHeaders.has(normalizeHeader(header)));
 }
 
-function SpreadsheetFields({ order }: { order: Order }) {
+function SpreadsheetFields({ order, className = '' }: { order: Order; className?: string }) {
   const fields = spreadsheetFields(order);
   if (fields.length === 0) return null;
-  return <div className="spreadsheet-fields">{fields.map(([label, value]) => <Detail key={label} label={label} value={value} />)}</div>;
+  return <div className={['spreadsheet-fields', className].filter(Boolean).join(' ')}>{fields.map(([label, value]) => <Detail key={label} label={label} value={value} />)}</div>;
 }
 
 function SpreadsheetDetails({ order }: { order: Order }) {
   const count = spreadsheetFields(order).length;
   if (count === 0) return null;
   return <details className="spreadsheet-details"><summary>Outros dados da planilha ({count})</summary><SpreadsheetFields order={order} /></details>;
+}
+
+function SpreadsheetToggleButton({ order, expanded, onToggle }: { order: Order; expanded: boolean; onToggle: () => void }) {
+  const count = spreadsheetFields(order).length;
+  if (count === 0) return null;
+  return <button type="button" className="spreadsheet-toggle" aria-expanded={expanded} onClick={onToggle}>{expanded ? 'Ocultar dados da planilha' : 'Outros dados da planilha'} ({count})</button>;
+}
+
+function SpreadsheetExpandedRow({ order, colSpan, onClose }: { order: Order; colSpan: number; onClose: () => void }) {
+  if (spreadsheetFields(order).length === 0) return null;
+  return (
+    <tr className="spreadsheet-expanded-row">
+      <td colSpan={colSpan}>
+        <section className="spreadsheet-expanded-panel">
+          <div className="spreadsheet-expanded-heading"><strong>Outros dados da planilha</strong><button type="button" className="spreadsheet-expanded-close" onClick={onClose}>Fechar</button></div>
+          <SpreadsheetFields order={order} className="admin-spreadsheet-fields" />
+        </section>
+      </td>
+    </tr>
+  );
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
@@ -1281,6 +1301,23 @@ function ProgressBar({ label, complete, total, percent }: { label: string; compl
   );
 }
 
+function OrderTableRow({ order }: { order: Order }) {
+  const [showSpreadsheetDetails, setShowSpreadsheetDetails] = useState(false);
+  return (
+    <>
+      <tr>
+        <td data-label="OS"><div className="order-os-cell"><span>OS {order.numConsequencia}</span><SpreadsheetToggleButton order={order} expanded={showSpreadsheetDetails} onToggle={() => setShowSpreadsheetDetails((open) => !open)} /></div></td>
+        <td data-label="Equipe">{order.equipe}</td><td data-label="Serviço">{order.servico}</td><td data-label="Previsto">{order.qtdAjustada || '—'}</td>
+        <td data-label="Executado">{order.qtdExecutada === undefined ? '—' : order.qtdExecutada + (quantityUnit(order.qtdAjustada) ? ' ' + quantityUnit(order.qtdAjustada) : '')}</td>
+        <td data-label="Situação"><StatusBadge status={order.status} /></td><td data-label="Protocolo">{order.protocolo || '—'}</td>
+        <td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td>
+        <td data-label="Evidência">{hasReportedImpediment(order) && order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td>
+      </tr>
+      {showSpreadsheetDetails && <SpreadsheetExpandedRow order={order} colSpan={9} onClose={() => setShowSpreadsheetDetails(false)} />}
+    </>
+  );
+}
+
 function OrderTable({ orders }: { orders: Order[] }) {
   return (
     <>
@@ -1288,15 +1325,7 @@ function OrderTable({ orders }: { orders: Order[] }) {
         <table className="admin-table">
           <thead><tr><th>OS</th><th>Equipe</th><th>Serviço</th><th>Previsto</th><th>Executado</th><th>Situação</th><th>Protocolo</th><th>Problema relatado</th><th>Evidência</th></tr></thead>
           <tbody>
-            {orders.map((order) => (
-              <tr key={order.id}>
-                <td data-label="OS"><span>OS {order.numConsequencia}</span><SpreadsheetDetails order={order} /></td><td data-label="Equipe">{order.equipe}</td><td data-label="Serviço">{order.servico}</td><td data-label="Previsto">{order.qtdAjustada || '—'}</td>
-                <td data-label="Executado">{order.qtdExecutada === undefined ? '—' : order.qtdExecutada + (quantityUnit(order.qtdAjustada) ? ' ' + quantityUnit(order.qtdAjustada) : '')}</td>
-                <td data-label="Situação"><StatusBadge status={order.status} /></td><td data-label="Protocolo">{order.protocolo || '—'}</td>
-                <td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td>
-                <td data-label="Evidência">{hasReportedImpediment(order) && order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td>
-              </tr>
-            ))}
+            {orders.map((order) => <OrderTableRow key={order.id} order={order} />)}
             {orders.length === 0 && <tr><td colSpan={9} className="table-empty">Nenhuma ordem para exibir.</td></tr>}
           </tbody>
         </table>
@@ -1626,6 +1655,23 @@ function ImportPage({
   );
 }
 
+function ProtocolTableRow({ order }: { order: Order }) {
+  const [showSpreadsheetDetails, setShowSpreadsheetDetails] = useState(false);
+  return (
+    <>
+      <tr>
+        <td data-label="Protocolo" className="protocol-cell">{order.protocolo}</td>
+        <td data-label="Ordem"><div className="order-os-cell"><span>{order.numConsequencia}</span><SpreadsheetToggleButton order={order} expanded={showSpreadsheetDetails} onToggle={() => setShowSpreadsheetDetails((open) => !open)} /></div></td>
+        <td data-label="Equipe">{order.equipe}</td><td data-label="Responsável">{order.responsavel || '—'}</td><td data-label="Registrado por">{order.registradoPor || '—'}</td>
+        <td data-label="Resultado do registro"><StatusBadge status={reportedStatus(order)} /></td>
+        <td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td>
+        <td data-label="Evidência">{order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td><td data-label="Data">{formatDate(order.dataRegistro)}</td>
+      </tr>
+      {showSpreadsheetDetails && <SpreadsheetExpandedRow order={order} colSpan={9} onClose={() => setShowSpreadsheetDetails(false)} />}
+    </>
+  );
+}
+
 function ProtocolsPage() {
   const [records, setRecords] = useState<Order[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -1658,7 +1704,7 @@ function ProtocolsPage() {
         <div className="panel-heading"><div><h2>Histórico de auditoria</h2><p className="muted">{records.length.toLocaleString('pt-BR')} registros carregados, incluindo novas tentativas da mesma ordem.</p></div><div className="orders-heading-actions"><button className="button button-secondary" onClick={() => { void loadRecords(null, false); }} disabled={loading}>{loading ? 'Carregando…' : 'Atualizar'}</button></div></div>
         {error && <div className="inline-error" role="alert">{error}</div>}
         <div className="table-scroll"><table className="admin-table protocols-table"><thead><tr><th>Protocolo</th><th>Ordem</th><th>Equipe</th><th>Responsável</th><th>Registrado por</th><th>Resultado do registro</th><th>Problema relatado</th><th>Evidência</th><th>Data</th></tr></thead>
-          <tbody>{records.map((order) => <tr key={order.protocolo || order.id}><td data-label="Protocolo" className="protocol-cell">{order.protocolo}</td><td data-label="Ordem">{order.numConsequencia}<SpreadsheetDetails order={order} /></td><td data-label="Equipe">{order.equipe}</td><td data-label="Responsável">{order.responsavel || '—'}</td><td data-label="Registrado por">{order.registradoPor || '—'}</td><td data-label="Resultado do registro"><StatusBadge status={reportedStatus(order)} /></td><td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td><td data-label="Evidência">{order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td><td data-label="Data">{formatDate(order.dataRegistro)}</td></tr>)}{records.length === 0 && !loading && !error && <tr><td colSpan={9} className="table-empty">Nenhum protocolo registrado.</td></tr>}</tbody>
+          <tbody>{records.map((order) => <ProtocolTableRow key={order.protocolo || order.id} order={order} />)}{records.length === 0 && !loading && !error && <tr><td colSpan={9} className="table-empty">Nenhum protocolo registrado.</td></tr>}</tbody>
         </table></div>
         <p className="table-scroll-hint">Deslize horizontalmente para consultar todas as colunas.</p>
         {hasMore && <div className="orders-load-more"><button className="button button-secondary" disabled={loading || !cursor} onClick={() => { void loadRecords(cursor, true); }}>{loading ? 'Carregando…' : 'Carregar mais registros'}</button></div>}

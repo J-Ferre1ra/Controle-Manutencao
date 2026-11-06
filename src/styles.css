@@ -129,8 +129,22 @@ h1, h2, h3, p { margin-top: 0; }
 .order-extra-details > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; padding-top: 10px; }
 .spreadsheet-details { margin-top: 7px; }
 .spreadsheet-details summary { color: var(--blue); cursor: pointer; font-size: 15px; font-weight: 600; }
-.spreadsheet-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin-top: 5px; }
+.spreadsheet-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; margin-top: 8px; }
 .order-extra-details .spreadsheet-fields { grid-column: 1 / -1; }
+.spreadsheet-fields .detail-row { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: initial; gap: 4px; padding: 10px 0; }
+.spreadsheet-fields .detail-row span { color: #71848d; font-size: 13px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+.spreadsheet-fields .detail-row strong { color: #2a4652; font-size: 15px; font-weight: 500; line-height: 1.45; text-align: left; overflow-wrap: anywhere; word-break: normal; }
+.order-os-cell { display: grid; min-width: 0; justify-items: start; gap: 5px; }
+.spreadsheet-toggle { max-width: 100%; padding: 0; border: 0; color: var(--blue); background: transparent; font-size: 14px; font-weight: 600; line-height: 1.4; text-align: left; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+.spreadsheet-toggle:hover, .spreadsheet-expanded-close:hover { text-decoration: underline; }
+.spreadsheet-toggle::before { content: '▸'; display: inline-block; margin-right: 5px; }
+.spreadsheet-toggle[aria-expanded="true"]::before { content: '▾'; }
+.spreadsheet-expanded-row > td { padding: 0 12px 14px; border-top: 0; background: transparent; white-space: normal; }
+.spreadsheet-expanded-panel { padding: 14px 16px; border: 1px solid #dce6ea; border-radius: 8px; background: #f8fbfc; }
+.spreadsheet-expanded-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 9px; border-bottom: 1px solid #e4ecee; }
+.spreadsheet-expanded-heading strong { color: #315564; font-size: 15px; }
+.spreadsheet-expanded-close { padding: 3px 0; border: 0; color: var(--blue); background: transparent; font-size: 14px; font-weight: 600; cursor: pointer; }
+.spreadsheet-expanded-panel .spreadsheet-fields { margin-bottom: 0; }
 .detail-row { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; border-bottom: 1px solid #edf1f2; font-size: 15px; }
 .detail-row span { color: #71848d; }
 .detail-row strong { color: #2a4652; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
@@ -513,10 +527,12 @@ h1, h2, h3, p { margin-top: 0; }
   .admin-table td:first-child { border-top: 0; background: #f7fafb; }
   .admin-table td::before { content: attr(data-label); color: #71848d; font-size: 15px; font-weight: 600; line-height: 1.45; }
   .admin-table td > * { min-width: 0; max-width: 100%; }
-  .admin-table td:first-child > .spreadsheet-details { grid-column: 1 / -1; width: 100%; margin-top: 5px; }
-  .admin-table td:first-child .spreadsheet-fields { grid-template-columns: minmax(0, 1fr); width: 100%; }
-  .admin-table td:first-child .spreadsheet-fields .detail-row { display: grid; grid-template-columns: minmax(105px, 38%) minmax(0, 1fr); align-items: start; gap: 8px; }
-  .admin-table td:first-child .spreadsheet-fields .detail-row strong { text-align: left; }
+  .admin-table tbody tr.spreadsheet-expanded-row { overflow: visible; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .admin-table tbody tr.spreadsheet-expanded-row:hover { background: transparent; }
+  .admin-table tbody tr.spreadsheet-expanded-row > td { display: block; padding: 0; border: 0; background: transparent; overflow: visible; }
+  .admin-table tbody tr.spreadsheet-expanded-row > td::before { content: none; }
+  .spreadsheet-expanded-panel { padding: 12px; }
+  .admin-spreadsheet-fields { grid-template-columns: minmax(0, 1fr); }
   .admin-table td.table-empty { display: block; padding: 18px 12px !important; text-align: center; }
   .admin-table td.table-empty::before { content: none; }
   .admin-table .issue-cell { min-width: 0; max-width: none; }
