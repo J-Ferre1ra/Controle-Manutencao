@@ -328,7 +328,9 @@ async function saveAdminState(request, env) {
     ? new Set(body.changedParts.filter((part) => ['orders', 'profiles', 'imports'].includes(part)))
     : new Set(['orders', 'profiles', 'imports']);
   if (orders.length > 12000 || profiles.length > 500 || imports.length > 5000) return json({ error: 'O arquivo excede o limite desta versão.' }, 413);
+  if (changedParts.has('profiles') && !Array.isArray(body.profiles)) return json({ error: 'A lista completa de perfis é necessária para salvar alterações.' }, 400);
 
+  let stateChanged = false;
   if (changedParts.has('orders')) {
     await env.DB.prepare('DELETE FROM work_orders').run();
     for (let start = 0; start < orders.length; start += 80) {
@@ -338,17 +340,27 @@ async function saveAdminState(request, env) {
       ).bind(String(order.id), String(order.equipe || ''), String(order.responsavel || ''), String(order.status || 'pendente'), JSON.stringify(order), new Date().toISOString()));
       if (statements.length) await env.DB.batch(statements);
     }
+    stateChanged = true;
   }
 
   if (changedParts.has('profiles')) {
-    const existingRows = await env.DB.prepare('SELECT id, password_salt, password_hash FROM access_profiles').all();
+    const existingRows = await env.DB.prepare('SELECT id, code, kind, password_salt, password_hash, profile_json, active FROM access_profiles').all();
     const existing = new Map(existingRows.results.map((row) => [row.id, row]));
+    const profileStatements = [];
     for (const profile of profiles) {
       const id = String(profile.id || crypto.randomUUID());
       const code = String(profile.code || '').trim();
       if (!code) continue;
       const previous = existing.get(id);
       const suppliedPassword = String(profile.password || '');
+      const kind = String(profile.kind || '');
+      const publicData = { ...profile, id, password: '' };
+      const profileJson = JSON.stringify(publicData);
+      const active = profile.active ? 1 : 0;
+      const changed = !previous || previous.code !== code || previous.kind !== kind ||
+        Number(previous.active) !== active || previous.profile_json !== profileJson || Boolean(suppliedPassword);
+      if (!changed) continue;
+
       let salt = previous?.password_salt;
       let passwordHash = previous?.password_hash;
       if (suppliedPassword) {
@@ -356,19 +368,30 @@ async function saveAdminState(request, env) {
         passwordHash = await hashPassword(suppliedPassword, salt);
       }
       if (!salt || !passwordHash) continue;
-      const publicData = { ...profile, id, password: '' };
-      await env.DB.prepare(`INSERT INTO access_profiles(id, code, kind, password_salt, password_hash, profile_json, active, updated_at)
+      if (previous) profileStatements.push(env.DB.prepare('DELETE FROM sessions WHERE profile_id = ?1').bind(id));
+      profileStatements.push(env.DB.prepare(`INSERT INTO access_profiles(id, code, kind, password_salt, password_hash, profile_json, active, updated_at)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         ON CONFLICT(id) DO UPDATE SET code=excluded.code, kind=excluded.kind,
         password_salt=excluded.password_salt, password_hash=excluded.password_hash,
         profile_json=excluded.profile_json, active=excluded.active, updated_at=excluded.updated_at`)
-        .bind(id, code, String(profile.kind || ''), salt, passwordHash, JSON.stringify(publicData), profile.active ? 1 : 0, new Date().toISOString()).run();
+        .bind(id, code, kind, salt, passwordHash, profileJson, active, new Date().toISOString()));
     }
 
-    const storedProfileIds = new Set(profiles.map((profile) => String(profile.id)));
-    for (const row of existingRows.results) {
-      if (!storedProfileIds.has(row.id)) await env.DB.prepare('DELETE FROM access_profiles WHERE id = ?1').bind(row.id).run();
+    for (let start = 0; start < profileStatements.length; start += 80) {
+      await env.DB.batch(profileStatements.slice(start, start + 80));
     }
+
+    const storedProfileIds = new Set(profiles.map((profile) => String(profile.id || '')).filter(Boolean));
+    const removedProfileIds = existingRows.results.map((row) => row.id).filter((id) => !storedProfileIds.has(id));
+    for (let start = 0; start < removedProfileIds.length; start += 80) {
+      const ids = removedProfileIds.slice(start, start + 80);
+      const placeholders = ids.map(() => '?').join(', ');
+      await env.DB.batch([
+        env.DB.prepare(`DELETE FROM sessions WHERE profile_id IN (${placeholders})`).bind(...ids),
+        env.DB.prepare(`DELETE FROM access_profiles WHERE id IN (${placeholders})`).bind(...ids),
+      ]);
+    }
+    if (profileStatements.length || removedProfileIds.length) stateChanged = true;
   }
 
   if (changedParts.has('imports')) {
@@ -379,10 +402,11 @@ async function saveAdminState(request, env) {
       ).bind(String(item.id), String(item.importedAt || ''), JSON.stringify(item)));
       if (statements.length) await env.DB.batch(statements);
     }
+    stateChanged = true;
   }
-  if (changedParts.has('orders')) {
+  if (stateChanged && changedParts.has('orders')) {
     await env.DB.prepare('UPDATE sync_metadata SET catalog_revision = catalog_revision + 1, change_revision = change_revision + 1 WHERE id = 1').run();
-  } else if (changedParts.size) {
+  } else if (stateChanged) {
     await env.DB.prepare('UPDATE sync_metadata SET change_revision = change_revision + 1 WHERE id = 1').run();
   }
   return json({ saved: true });

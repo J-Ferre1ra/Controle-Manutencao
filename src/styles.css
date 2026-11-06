@@ -301,6 +301,8 @@ h1, h2, h3, p { margin-top: 0; }
 .notification-dismiss:hover { background: #edf5f2; }
 .table-action { padding: 4px 8px; border: 0; color: var(--blue); background: transparent; font-size: 15px; font-weight: 700; }
 .table-action:hover { text-decoration: underline; }
+.table-action-danger { color: #b63838; }
+.access-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
 .issue-cell { min-width: 210px; max-width: 360px; white-space: normal !important; line-height: 1.45; }
 .issue-cell strong, .issue-cell span { display: block; }
 .issue-cell span { margin-top: 3px; color: var(--muted); }

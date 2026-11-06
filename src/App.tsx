@@ -21,7 +21,7 @@ const pageLabels: Record<AdminPage, { title: string; subtitle: string }> = {
   ordens: { title: 'Ordens', subtitle: 'Consulte e exporte as ordens das carteiras importadas.' },
   importacao: { title: 'Importar planilhas', subtitle: 'Carregue as carteiras do mês e distribua as ordens.' },
   protocolos: { title: 'Protocolos', subtitle: 'Consulte os registros de execução e impedimento.' },
-  acessos: { title: 'Acessos', subtitle: 'Crie perfis e vincule cada acesso à equipe ou responsável.' },
+  acessos: { title: 'Acessos', subtitle: 'Crie, edite e remova acessos das equipes.' },
 };
 
 function normalize(value: string): string {
@@ -300,6 +300,20 @@ export default function App() {
         method: 'POST',
         body: JSON.stringify({ orders, profiles, imports, changedParts }),
       }).then(() => {
+        const submittedPasswords = new Map(profiles.filter((profile) => profile.password).map((profile) => [profile.id, profile.password]));
+        if (submittedPasswords.size) {
+          setProfiles((current) => {
+            let changed = false;
+            const next = current.map((profile) => {
+              if (profile.password && submittedPasswords.get(profile.id) === profile.password) {
+                changed = true;
+                return { ...profile, password: '' };
+              }
+              return profile;
+            });
+            return changed ? next : current;
+          });
+        }
         if (dirtyRevision.current === revision) {
           adminDirty.current = false;
           dirtyAdminSections.current.clear();
@@ -1520,10 +1534,10 @@ function ProtocolsPage({ orders }: { orders: Order[] }) {
 function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRetrySave, created, setCreated }: { orders: Order[]; profiles: AccessProfile[]; setProfiles: (profiles: AccessProfile[]) => void; saveStatus: AdminSaveStatus; saveError: string; onRetrySave: () => void; created: AccessProfile | null; setCreated: (profile: AccessProfile | null) => void }) {
   type NewProfileKind = 'neoenergia' | 'vencer';
   const [showForm, setShowForm] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [kind, setKind] = useState<NewProfileKind>('neoenergia');
   const [responsible, setResponsible] = useState('');
   const [operatorName, setOperatorName] = useState('');
-  const [label, setLabel] = useState('');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -1533,9 +1547,41 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
     ...profiles.filter((profile) => canonicalProfileKind(profile.kind) === kind).map((profile) => profile.responsible || ''),
   ].map((value) => value.trim()).filter((value) => value && !isCancelOrderValue(value)))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
-  function createAccess(event: FormEvent<HTMLFormElement>) {
+  function resetForm() {
+    setShowForm(false);
+    setEditingProfileId(null);
+    setKind('neoenergia');
+    setResponsible('');
+    setOperatorName('');
+    setCode('');
+    setPassword('');
+    setConfirmPassword('');
+    setError('');
+  }
+
+  function startCreate() {
+    resetForm();
+    setCreated(null);
+    setShowForm(true);
+  }
+
+  function startEdit(profile: AccessProfile) {
+    setEditingProfileId(profile.id);
+    setKind(canonicalProfileKind(profile.kind));
+    setResponsible(profile.responsible || profile.team || '');
+    setOperatorName(profile.operatorName || profile.responsible || profile.label);
+    setCode(profile.code);
+    setPassword('');
+    setConfirmPassword('');
+    setError('');
+    setCreated(null);
+    setShowForm(true);
+  }
+
+  function saveAccess(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
+    const editingProfile = profiles.find((profile) => profile.id === editingProfileId);
     const cleanCode = code.trim().toUpperCase();
     const cleanPassword = password.trim();
     if (!responsible.trim()) {
@@ -1546,8 +1592,7 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
       setError('Uma ordem de cancelamento não pode ser usada como responsável de acesso.');
       return;
     }
-    if (kind === 'neoenergia' && !orders.some((order) =>
-      canonicalCompany(order.empresa) === kind && normalize(order.responsavel) === normalize(responsible.trim()))) {
+    if (kind === 'neoenergia' && !responsibleChoices.some((option) => normalize(option) === normalize(responsible.trim()))) {
       setError('Para Neoenergia, selecione um responsável que exista na carteira atual.');
       return;
     }
@@ -1555,74 +1600,89 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
       setError('Informe o nome que ficará registrado nos protocolos.');
       return;
     }
+    if (editingProfileId && !editingProfile) {
+      setError('Esse perfil não está mais disponível. Atualize a página e tente novamente.');
+      return;
+    }
     if (cleanCode.length < 4) {
       setError('O código de acesso precisa ter pelo menos 4 caracteres.');
       return;
     }
-    if (profiles.some((profile) => normalize(profile.code) === normalize(cleanCode))) {
+    if (profiles.some((profile) => profile.id !== editingProfile?.id && normalize(profile.code) === normalize(cleanCode))) {
       setError('Esse código já está em uso. Escolha outro.');
       return;
     }
-    if (cleanPassword.length < 4) {
+    if (!editingProfile && cleanPassword.length < 4) {
       setError('A senha precisa ter pelo menos 4 caracteres.');
       return;
     }
-    if (cleanPassword !== confirmPassword.trim()) {
+    if (editingProfile && !cleanPassword && confirmPassword.trim()) {
+      setError('Digite a nova senha ou deixe os dois campos de senha vazios para mantê-la.');
+      return;
+    }
+    if (cleanPassword && cleanPassword.length < 4) {
+      setError('A senha precisa ter pelo menos 4 caracteres.');
+      return;
+    }
+    if (cleanPassword && cleanPassword !== confirmPassword.trim()) {
       setError('As senhas não coincidem.');
       return;
     }
+
     const profile: AccessProfile = {
-      id: 'profile-' + Date.now(),
+      id: editingProfile?.id || 'profile-' + Date.now(),
       kind,
-      label: label.trim() || `${kindLabels[kind]} • ${responsible.trim()} • ${operatorName.trim()}`,
+      label: `${kindLabels[kind]} • ${responsible.trim()} • ${operatorName.trim()}`,
       operatorName: operatorName.trim(),
       code: cleanCode,
       password: cleanPassword,
       team: '',
       responsible: responsible.trim(),
-      active: true,
+      active: editingProfile?.active ?? true,
     };
-    setProfiles([...profiles, profile]);
+    setProfiles(editingProfile
+      ? profiles.map((item) => item.id === editingProfile.id ? profile : item)
+      : [...profiles, profile]);
     setCreated(profile);
-    setOperatorName('');
-    setLabel('');
-    setResponsible('');
-    setCode('');
-    setPassword('');
-    setConfirmPassword('');
-    setShowForm(false);
+    resetForm();
   }
 
   function toggle(profile: AccessProfile) {
     setProfiles(profiles.map((item) => item.id === profile.id ? { ...item, active: !item.active } : item));
   }
 
+  function remove(profile: AccessProfile) {
+    const confirmed = window.confirm(`Excluir permanentemente o acesso "${profile.label}" (${profile.code})? As sessões serão encerradas e não será possível desfazer.`);
+    if (!confirmed) return;
+    setProfiles(profiles.filter((item) => item.id !== profile.id));
+    if (editingProfileId === profile.id) resetForm();
+    if (created?.id === profile.id) setCreated(null);
+  }
+
   return (
     <main className="admin-content">
       <section className="panel access-panel">
-        <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Cada acesso libera somente as ordens do responsável selecionado.</p></div><button className="button button-primary" onClick={() => setShowForm((value) => !value)}>+ Criar perfil</button></div>
-        <div className="security-note"><strong>Escopo do acesso</strong><span>Escolha Neoenergia ou Vencer e vincule ao RESPONSÁVEL da carteira. O campo equipe/carteira foi removido; Inspetor entra no grupo Neoenergia.</span></div>
-        {created && <div className="created-credentials"><div><strong>{saveStatus === 'error' ? 'Acesso ainda não salvo' : saveStatus === 'saved' ? 'Acesso salvo no servidor' : 'Salvando acesso no servidor…'}</strong><span>{kindLabels[created.kind]} · {created.responsible || created.team || 'Sem responsável'} · {created.operatorName}</span><span>{saveStatus === 'error' ? (saveError || 'Não repasse este acesso ainda. Tente salvar novamente.') : saveStatus === 'saved' ? 'Guarde os dados: a senha não poderá ser consultada depois.' : 'Aguarde a confirmação antes de repassar o código e a senha.'}</span></div>{saveStatus === 'saved' && <code>{created.code} / {created.password}</code>}{saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}{saveStatus === 'saved' && <button className="text-button" onClick={() => setCreated(null)}>Fechar</button>}</div>}
+        <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Cada acesso vê as ordens do responsável selecionado.</p></div><button className="button button-primary" onClick={startCreate}>+ Criar perfil</button></div>
+        {created && <div className="created-credentials"><div><strong>{saveStatus === 'error' ? 'Alteração não salva' : saveStatus === 'saved' ? 'Alterações salvas' : 'Salvando alterações…'}</strong><span>{kindLabels[created.kind]} · {created.responsible || created.team || 'Sem responsável'} · {created.operatorName}</span><span>{saveStatus === 'error' ? (saveError || 'O servidor não confirmou. Tente novamente.') : created.password ? saveStatus === 'saved' ? 'Guarde o código e a nova senha; ela não poderá ser consultada depois.' : 'Aguarde a confirmação antes de usar as novas credenciais.' : saveStatus === 'saved' ? 'O perfil foi atualizado. A senha existente foi mantida.' : 'Aguarde a confirmação do servidor.'}</span></div>{saveStatus === 'saved' && created.password && <code>{created.code} / {created.password}</code>}{saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}{saveStatus === 'saved' && <button className="text-button" onClick={() => setCreated(null)}>Fechar</button>}</div>}
         {showForm && (
-          <form className="access-form" onSubmit={createAccess}>
-            <div className="form-heading"><h3>Novo perfil</h3><p>Defina o tipo, o responsável e as credenciais que serão entregues à equipe.</p></div>
+          <form className="access-form" onSubmit={saveAccess}>
+            <div className="form-heading"><h3>{editingProfileId ? 'Editar acesso' : 'Novo acesso'}</h3><p>Escolha o responsável e defina as credenciais.</p></div>
             <div className="form-grid">
               <label className="field-group"><span>Tipo de acesso</span><select value={kind} onChange={(event) => { setKind(event.target.value as NewProfileKind); setResponsible(''); }}><option value="neoenergia">Neoenergia</option><option value="vencer">Vencer</option></select></label>
-              <label className="field-group"><span>Responsável da planilha</span><input list="access-responsible-options" value={responsible} onChange={(event) => setResponsible(event.target.value)} placeholder="Escolha ou digite como aparece na planilha" required /><datalist id="access-responsible-options">{responsibleChoices.map((option) => <option key={option} value={option} />)}</datalist></label>
+              <label className="field-group"><span>Responsável</span><input list="access-responsible-options" value={responsible} onChange={(event) => setResponsible(event.target.value)} placeholder="Como aparece na planilha" required /><datalist id="access-responsible-options">{responsibleChoices.map((option) => <option key={option} value={option} />)}</datalist></label>
               <label className="field-group"><span>Nome registrado nos protocolos</span><input value={operatorName} onChange={(event) => setOperatorName(event.target.value)} placeholder="Ex.: João Silva" autoComplete="name" required /></label>
-              <label className="field-group"><span>Código de acesso escolhido pelo supervisor</span><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Ex.: NEO-1524" autoComplete="off" minLength={4} required /></label>
-              <label className="field-group"><span>Senha escolhida pelo supervisor</span><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Mínimo de 4 caracteres" autoComplete="new-password" minLength={4} required /></label>
-              <label className="field-group"><span>Confirme a senha</span><input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" placeholder="Digite a senha novamente" autoComplete="new-password" minLength={4} required /></label>
-              <label className="field-group"><span>Identificação do perfil (opcional)</span><input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Ex.: Vegetação • Garanhuns" /></label>
+              <label className="field-group"><span>Código de acesso</span><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Ex.: NEO-1524" autoComplete="off" minLength={4} required /></label>
+              <label className="field-group"><span>{editingProfileId ? 'Nova senha (opcional)' : 'Senha'}</span><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder={editingProfileId ? 'Vazio mantém a senha atual' : 'Mínimo de 4 caracteres'} autoComplete="new-password" minLength={editingProfileId ? undefined : 4} required={!editingProfileId} /></label>
+              <label className="field-group"><span>{editingProfileId ? 'Confirme a nova senha' : 'Confirme a senha'}</span><input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" placeholder="Digite a senha novamente" autoComplete="new-password" minLength={editingProfileId ? undefined : 4} required={!editingProfileId} /></label>
             </div>
             {error && <div className="inline-error" role="alert">{error}</div>}
-            <div className="form-actions"><button type="button" className="button button-ghost" onClick={() => setShowForm(false)}>Cancelar</button><button className="button button-primary" type="submit">Salvar e criar acesso</button></div>
+            <div className="form-actions"><button type="button" className="button button-ghost" onClick={resetForm}>Cancelar</button><button className="button button-primary" type="submit">{editingProfileId ? 'Salvar alterações' : 'Criar acesso'}</button></div>
           </form>
         )}
         <div className="table-scroll"><table className="admin-table access-table"><thead><tr><th>Perfil</th><th>Tipo</th><th>Responsável</th><th>Nome auditado</th><th>Código</th><th>Estado</th><th>Ação</th></tr></thead>
-          <tbody>{profiles.map((profile) => <tr key={profile.id}><td data-label="Perfil"><strong>{profile.label}</strong></td><td data-label="Tipo">{kindLabels[profile.kind]}</td><td data-label="Responsável">{profile.responsible || profile.team || '—'}</td><td data-label="Nome auditado">{profile.operatorName || profile.responsible || profile.label}</td><td data-label="Código"><code>{profile.code}</code></td><td data-label="Estado"><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td data-label="Ação"><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button></td></tr>)}</tbody>
+          <tbody>{profiles.map((profile) => <tr key={profile.id}><td data-label="Perfil"><strong>{profile.label}</strong></td><td data-label="Tipo">{kindLabels[profile.kind]}</td><td data-label="Responsável">{profile.responsible || profile.team || '—'}</td><td data-label="Nome auditado">{profile.operatorName || profile.responsible || profile.label}</td><td data-label="Código"><code>{profile.code}</code></td><td data-label="Estado"><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td data-label="Ação"><div className="access-actions"><button className="table-action" onClick={() => startEdit(profile)}>Editar</button><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button><button className="table-action table-action-danger" onClick={() => remove(profile)}>Excluir</button></div></td></tr>)}</tbody>
         </table></div>
-        <p className="local-warning">Os perfis e as ordens são salvos no servidor. As senhas são protegidas e não podem ser consultadas depois de criadas.</p>
+        <p className="local-warning">Alterar um perfil ou excluí-lo encerra as sessões abertas desse acesso.</p>
       </section>
     </main>
   );
