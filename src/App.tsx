@@ -17,7 +17,7 @@ const kindLabels: Record<ProfileKind, string> = {
 };
 
 const pageLabels: Record<AdminPage, { title: string; subtitle: string }> = {
-  painel: { title: 'Visão geral', subtitle: 'Ordens executadas, pendências e produtividade das equipes.' },
+  painel: { title: 'Visão geral', subtitle: 'Ordens executadas, pendências e produtividade por responsável.' },
   controle: { title: 'Controle', subtitle: 'Gráficos de execução por situação, equipe, serviço e responsável.' },
   ordens: { title: 'Ordens', subtitle: 'Consulte e exporte as ordens das carteiras importadas.' },
   importacao: { title: 'Importar planilhas', subtitle: 'Carregue as carteiras do mês e distribua as ordens.' },
@@ -39,7 +39,10 @@ function canonicalCompany(value: string): string {
 }
 
 function companyLabel(value: string): string {
-  return canonicalCompany(value) === 'neoenergia' ? 'Neoenergia' : value;
+  const company = canonicalCompany(value);
+  if (company === 'neoenergia') return 'Neoenergia';
+  if (company === 'vencer') return 'Vencer';
+  return value;
 }
 
 function canonicalProfileKind(value: string): 'neoenergia' | 'vencer' {
@@ -53,6 +56,42 @@ function isCancelOrderValue(value: string): boolean {
 function isCancellationOrder(order: Pick<Order, 'empresa' | 'equipe' | 'responsavel' | 'servico' | 'original'>): boolean {
   return [order.empresa, order.equipe, order.responsavel, order.servico, ...Object.values(order.original || {})]
     .some(isCancelOrderValue);
+}
+
+function orderTeamGroupKey(order: Order): string {
+  if (isCancellationOrder(order)) return '';
+  const team = order.equipe.trim() || order.responsavel.trim();
+  return team ? JSON.stringify([canonicalCompany(order.empresa), normalize(team)]) : '';
+}
+
+function activeTeamBreakdown(orders: Order[]) {
+  const groups = new Map<string, { key: string; label: string; orders: Order[] }>();
+  orders.forEach((order) => {
+    const team = order.equipe.trim() || order.responsavel.trim();
+    const key = orderTeamGroupKey(order);
+    if (!key) return;
+    const companyName = companyLabel(order.empresa);
+    const label = companyName ? `${companyName} • ${team}` : team;
+    const group = groups.get(key);
+    if (group) group.orders.push(order);
+    else groups.set(key, { key, label, orders: [order] });
+  });
+  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+}
+
+function activeResponsibleBreakdown(orders: Order[]) {
+  const groups = new Map<string, { key: string; label: string; company: string; responsible: string; orders: Order[] }>();
+  orders.forEach((order) => {
+    const responsible = order.responsavel.trim();
+    if (!responsible || isCancellationOrder(order)) return;
+    const company = canonicalCompany(order.empresa);
+    if (!['neoenergia', 'vencer'].includes(company)) return;
+    const key = JSON.stringify([company, normalize(responsible)]);
+    const group = groups.get(key);
+    if (group) group.orders.push(order);
+    else groups.set(key, { key, label: `${companyLabel(order.empresa)} • ${responsible}`, company, responsible, orders: [order] });
+  });
+  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
 }
 
 function submitOnEnter(event: KeyboardEvent<HTMLInputElement>) {
@@ -932,7 +971,7 @@ function AdminApp({
     const searchValue = normalize(search);
     const textMatch = !searchValue || [order.numConsequencia, order.equipe, order.servico, order.protocolo, order.responsavel, order.motivoImpedimento, order.observacao]
       .some((value) => normalize(value || '').includes(searchValue));
-    const teamMatch = !teamFilter || order.equipe === teamFilter;
+    const teamMatch = !teamFilter || orderTeamGroupKey(order) === teamFilter;
     const statusMatch = !statusFilter || (statusFilter === 'impedimento' ? hasReportedImpediment(order) : order.status === statusFilter);
     const serviceMatch = !serviceFilter || order.servico === serviceFilter;
     return textMatch && teamMatch && statusMatch && serviceMatch;
@@ -1048,20 +1087,12 @@ function Dashboard({
 }) {
   const executed = orders.filter((order) => order.status === 'executada').length;
   const impediments = orders.filter(hasReportedImpediment).length;
-  const teams = [...new Set(orders.map((order) => order.equipe).filter((team) => Boolean(team) && !isCancelOrderValue(team)))];
-  const teamStats = teams.map((team) => {
-    const assigned = orders.filter((order) => order.equipe === team);
+  const teamGroups = activeTeamBreakdown(orders);
+  const responsibleGroups = activeResponsibleBreakdown(orders);
+  const responsibleStats = responsibleGroups.map(({ label, orders: assigned }) => {
     const complete = assigned.filter((order) => order.status === 'executada').length;
-    return { label: team, complete, total: assigned.length, percent: assigned.length ? Math.round(complete / assigned.length * 100) : 0 };
+    return { label, complete, total: assigned.length, percent: assigned.length ? Math.round(complete / assigned.length * 100) : 0 };
   });
-  const contractorGroups = [...new Map(orders
-    .filter((order) => order.responsavel && !isCancelOrderValue(order.responsavel) && ['vencer', 'neoenergia'].includes(canonicalCompany(order.empresa)))
-    .map((order) => [`${canonicalCompany(order.empresa)}\u0000${order.responsavel}`, { company: canonicalCompany(order.empresa), responsible: order.responsavel }])).values()];
-  const contractorStats = contractorGroups.map(({ company, responsible }) => {
-      const assigned = orders.filter((order) => canonicalCompany(order.empresa) === company && normalize(order.responsavel) === normalize(responsible));
-      const complete = assigned.filter((order) => order.status === 'executada').length;
-      return { label: companyLabel(company) + ' • ' + responsible, complete, total: assigned.length, percent: assigned.length ? Math.round(complete / assigned.length * 100) : 0 };
-    });
 
   function quickFilter(status: string) {
     setStatusFilter(status);
@@ -1077,14 +1108,14 @@ function Dashboard({
         <StatCard title="Ordens importadas" value={orders.length.toLocaleString('pt-BR')} detail="na carteira ativa" />
         <StatCard title="Executadas" value={executed.toLocaleString('pt-BR')} detail="na carteira atual" tone="success" onClick={() => quickFilter('executada')} />
         <StatCard title="Impedimentos" value={impediments.toLocaleString('pt-BR')} detail="ordens que seguem pendentes" tone="warning" onClick={() => quickFilter('impedimento')} />
-        <StatCard title="Equipes ativas" value={teams.length.toLocaleString('pt-BR')} detail="com ordens liberadas" />
+        <StatCard title="Responsáveis na carteira" value={responsibleStats.length.toLocaleString('pt-BR')} detail="separados por empresa" />
       </section>
 
       <section className="panel consolidated-panel">
         <div className="panel-heading"><h2>Efetivação dos serviços</h2><span className="demo-tag">Carteira ativa</span></div>
         <div className="filter-row">
           <form className="search-field admin-search" onSubmit={(event) => { event.preventDefault(); setPage('ordens'); }}><span aria-hidden="true">⌕</span><input value={search} placeholder="Buscar e pressione Enter" onChange={(event) => setSearch(event.target.value)} /></form>
-          <select aria-label="Filtrar equipe" onChange={(event) => { setTeamFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team}>{team}</option>)}</select>
+          <select aria-label="Filtrar equipe" onChange={(event) => { setTeamFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as equipes</option>{teamGroups.map((team) => <option key={team.key} value={team.key}>{team.label}</option>)}</select>
           <select aria-label="Filtrar serviço" onChange={(event) => { setServiceFilter(event.target.value); setPage('ordens'); }}><option value="">Todos os serviços</option>{[...new Set(orders.map((order) => order.servico).filter((service) => Boolean(service) && !isCancelOrderValue(service)))].map((service) => <option key={service}>{service}</option>)}</select>
           <select aria-label="Filtrar situação" onChange={(event) => { setStatusFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as situações</option><option value="pendente">Pendente</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
           <span className="period-chip compact-period">Carteira atual</span>
@@ -1094,16 +1125,10 @@ function Dashboard({
       </section>
 
       <section className="panel progress-panel">
-        <div className="panel-heading"><h2>Efetivação por equipe</h2><span className="muted small">Ordens concluídas na carteira</span></div>
-        <div className="progress-grid">
-          {teamStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}
-        </div>
-        {contractorStats.length > 0 && (
-          <div className="responsible-progress">
-            <div className="panel-heading compact-heading"><h3>Efetivação por responsável • Vencer e Neoenergia</h3></div>
-            <div className="progress-grid">{contractorStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}</div>
-          </div>
-        )}
+        <div className="panel-heading"><h2>Efetivação por responsável</h2><span className="muted small">Neoenergia e Vencer · ordens da carteira</span></div>
+        {responsibleStats.length > 0
+          ? <div className="progress-grid">{responsibleStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}</div>
+          : <div className="empty-state"><strong>Nenhum responsável na carteira</strong><span>Importe uma planilha com a coluna RESPONSÁVEL preenchida.</span></div>}
       </section>
     </main>
   );
@@ -1308,7 +1333,7 @@ function OrdersPage({
   onClearFilters: () => void;
   onExport: () => void;
 }) {
-  const teams = [...new Set(allOrders.map((order) => order.equipe).filter((team) => Boolean(team) && !isCancelOrderValue(team)))];
+  const teams = activeTeamBreakdown(allOrders);
   const services = [...new Set(allOrders.map((order) => order.servico).filter((service) => Boolean(service) && !isCancelOrderValue(service)))];
   const hasFilters = Boolean(query || teamFilter || statusFilter || serviceFilter);
   return (
@@ -1317,7 +1342,7 @@ function OrdersPage({
         <div className="panel-heading"><div><h2>Ordens da carteira</h2><p className="muted">{orders.length.toLocaleString('pt-BR')} registros na seleção atual</p></div><div className="orders-heading-actions">{hasFilters && <button className="text-button" onClick={onClearFilters}>Limpar filtros</button>}<button className="button button-secondary" onClick={onExport}>Exportar seleção</button></div></div>
         <div className="filter-row orders-filter-row">
           <label className="search-field admin-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OS, equipe, responsável ou protocolo" /></label>
-          <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team}>{team}</option>)}</select>
+          <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team.key} value={team.key}>{team.label}</option>)}</select>
           <select value={serviceFilter} onChange={(event) => setServiceFilter(event.target.value)}><option value="">Todos os serviços</option>{services.map((service) => <option key={service}>{service}</option>)}</select>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todas as situações</option><option value="pendente">Pendente</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
         </div>

@@ -513,6 +513,10 @@ h1, h2, h3, p { margin-top: 0; }
   .admin-table td:first-child { border-top: 0; background: #f7fafb; }
   .admin-table td::before { content: attr(data-label); color: #71848d; font-size: 15px; font-weight: 600; line-height: 1.45; }
   .admin-table td > * { min-width: 0; max-width: 100%; }
+  .admin-table td:first-child > .spreadsheet-details { grid-column: 1 / -1; width: 100%; margin-top: 5px; }
+  .admin-table td:first-child .spreadsheet-fields { grid-template-columns: minmax(0, 1fr); width: 100%; }
+  .admin-table td:first-child .spreadsheet-fields .detail-row { display: grid; grid-template-columns: minmax(105px, 38%) minmax(0, 1fr); align-items: start; gap: 8px; }
+  .admin-table td:first-child .spreadsheet-fields .detail-row strong { text-align: left; }
   .admin-table td.table-empty { display: block; padding: 18px 12px !important; text-align: center; }
   .admin-table td.table-empty::before { content: none; }
   .admin-table .issue-cell { min-width: 0; max-width: none; }
