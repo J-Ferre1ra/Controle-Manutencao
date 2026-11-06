@@ -926,11 +926,26 @@ function SpreadsheetToggleButton({ order, expanded, onToggle }: { order: Order; 
 }
 
 function SpreadsheetExpandedRow({ order, colSpan, onClose }: { order: Order; colSpan: number; onClose: () => void }) {
+  const panelRef = useRef<HTMLElement | null>(null);
+  const [panelWidth, setPanelWidth] = useState(0);
+  useEffect(() => {
+    const panel = panelRef.current;
+    const tableScroll = panel?.closest('.table-scroll');
+    if (!(tableScroll instanceof HTMLElement)) return;
+    const updateWidth = () => {
+      const cellPadding = window.matchMedia('(max-width: 900px)').matches ? 0 : 26;
+      setPanelWidth(Math.max(0, tableScroll.clientWidth - cellPadding));
+    };
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(tableScroll);
+    return () => observer.disconnect();
+  }, []);
   if (spreadsheetFields(order).length === 0) return null;
   return (
     <tr className="spreadsheet-expanded-row">
       <td colSpan={colSpan}>
-        <section className="spreadsheet-expanded-panel">
+        <section ref={panelRef} className="spreadsheet-expanded-panel" style={panelWidth ? { width: `${panelWidth}px`, maxWidth: `${panelWidth}px` } : undefined}>
           <div className="spreadsheet-expanded-heading"><strong>Outros dados da planilha</strong><button type="button" className="spreadsheet-expanded-close" onClick={onClose}>Fechar</button></div>
           <SpreadsheetFields order={order} className="admin-spreadsheet-fields" />
         </section>

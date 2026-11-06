@@ -449,7 +449,7 @@ h1, h2, h3, p { margin-top: 0; }
   .order-card h2 { font-size: 17px; }
   .order-card .button { min-height: 45px; }
   .order-extra-details > div { grid-template-columns: 1fr; gap: 3px; }
-  .spreadsheet-fields { grid-template-columns: 1fr; }
+  .order-extra-details .spreadsheet-fields { grid-template-columns: 1fr; }
   .field-identity { margin-top: 14px; }
   .back-link { margin-top: 15px; }
   .order-summary { padding: 14px; }
@@ -532,7 +532,7 @@ h1, h2, h3, p { margin-top: 0; }
   .admin-table tbody tr.spreadsheet-expanded-row > td { display: block; padding: 0; border: 0; background: transparent; overflow: visible; }
   .admin-table tbody tr.spreadsheet-expanded-row > td::before { content: none; }
   .spreadsheet-expanded-panel { padding: 12px; }
-  .admin-spreadsheet-fields { grid-template-columns: minmax(0, 1fr); }
+  .admin-spreadsheet-fields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap: 0 14px; }
   .admin-table td.table-empty { display: block; padding: 18px 12px !important; text-align: center; }
   .admin-table td.table-empty::before { content: none; }
   .admin-table .issue-cell { min-width: 0; max-width: none; }
@@ -554,6 +554,14 @@ h1, h2, h3, p { margin-top: 0; }
   .created-credentials > div { min-width: 0; overflow-wrap: anywhere; }
 }
 
+@media (min-width: 561px) and (max-width: 900px) {
+  .filter-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filter-row .admin-search { grid-column: 1 / -1; width: 100%; min-width: 0; }
+  .filter-row select { width: 100%; min-width: 0; }
+  .filter-row select:last-of-type { grid-column: 1 / -1; }
+  .admin-spreadsheet-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media (max-width: 560px) {
   .admin-topbar { grid-template-columns: 36px minmax(0, 1fr); align-items: start; gap: 8px; min-height: 0; padding: 11px 12px 12px; }
   .admin-topbar > div:first-of-type { grid-column: 2; }
@@ -571,7 +579,7 @@ h1, h2, h3, p { margin-top: 0; }
   .panel-heading p { line-height: 1.4; overflow-wrap: anywhere; }
   .admin-nav-item { min-height: 46px; font-size: 16px; }
   .filter-row { gap: 8px; }
-  .filter-row select { min-height: 44px; padding-top: 8px; padding-bottom: 8px; font-size: 15px; }
+  .filter-row select { flex-basis: 100%; min-height: 44px; padding-top: 8px; padding-bottom: 8px; font-size: 15px; }
   .admin-search { min-height: 44px; }
   .admin-search input { height: 42px; }
   .orders-panel > .panel-heading > .button,
