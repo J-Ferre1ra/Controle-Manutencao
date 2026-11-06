@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ChangeEvent, FormEvent } from 'react';
+import type { ChangeEvent, FormEvent, KeyboardEvent } from 'react';
 import { apiRequest, readSharedState } from './data/api';
 import type { SharedAppState, SyncCursor } from './data/api';
-import { exportControlWorkbook, mapSpreadsheetRow, readWorkbook, rowsFromSheet } from './lib/excel';
+import { exportControlWorkbook, headersFromSheet, mapSpreadsheetRow, readWorkbook, rowsFromSheet } from './lib/excel';
 import type { ParsedWorkbook } from './lib/excel';
+import { parseNumericQuantity } from './lib/quantity.js';
 import type { AccessProfile, AdminPage, ExecutionNotification, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
 
 const SYNC_POLL_INTERVAL_MS = 2 * 60 * 1000;
@@ -49,9 +50,19 @@ function isCancelOrderValue(value: string): boolean {
   return /^cancelar\s+(?:a\s+)?ordem$/.test(normalize(value));
 }
 
+function isCancellationOrder(order: Pick<Order, 'empresa' | 'equipe' | 'responsavel' | 'servico' | 'original'>): boolean {
+  return [order.empresa, order.equipe, order.responsavel, order.servico, ...Object.values(order.original || {})]
+    .some(isCancelOrderValue);
+}
+
+function submitOnEnter(event: KeyboardEvent<HTMLInputElement>) {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  event.currentTarget.form?.requestSubmit();
+}
+
 function parseQuantity(value: string): number {
-  const match = value.replace(',', '.').match(/-?\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : 0;
+  return parseNumericQuantity(value) ?? 0;
 }
 
 type AdminSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -321,6 +332,10 @@ export default function App() {
           setAdminSaveStatus('saved');
         }
       }).catch((error: unknown) => {
+        if (error instanceof Error && error.message === 'Sessão encerrada. Entre novamente.') {
+          void logout();
+          return;
+        }
         if (dirtyRevision.current === revision) {
           setAdminSaveError(error instanceof Error ? error.message : 'Falha desconhecida ao salvar.');
           setAdminSaveStatus('error');
@@ -364,7 +379,11 @@ export default function App() {
             return merged;
           });
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Sessão encerrada. Entre novamente.') {
+          void logout();
+          return;
+        }
         // A próxima atualização tenta novamente sem interromper a tela atual.
       } finally {
         refreshing = false;
@@ -466,12 +485,12 @@ function LoginScreen({
           </div>
           <label className="field-group">
             <span>Código de acesso</span>
-            <input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Ex.: NEO-1524" autoComplete="username" required />
+            <input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} onKeyDown={submitOnEnter} placeholder="Ex.: NEO-1524" autoComplete="username" required />
           </label>
 
           <label className="field-group">
             <span>Senha</span>
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Digite a senha do perfil" autoComplete="current-password" required />
+            <input value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={submitOnEnter} type="password" placeholder="Digite a senha do perfil" autoComplete="current-password" required />
           </label>
 
           {error && <div className="inline-error" role="alert">{error}</div>}
@@ -508,8 +527,8 @@ function SupervisorLogin({ onBack, onLogin }: { onBack: () => void; onLogin: (co
         <h1>Área do supervisor</h1>
         <p className="login-intro">Entre com o acesso administrativo para consultar e administrar as carteiras.</p>
         <form onSubmit={submit} className="login-form">
-          <label className="field-group"><span>Código do supervisor</span><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} autoComplete="username" /></label>
-          <label className="field-group"><span>Senha</span><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
+          <label className="field-group"><span>Código do supervisor</span><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} onKeyDown={submitOnEnter} autoComplete="username" /></label>
+          <label className="field-group"><span>Senha</span><input value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={submitOnEnter} type="password" autoComplete="current-password" /></label>
           {error && <div className="inline-error" role="alert">{error}</div>}
           <button className="button button-primary button-full" type="submit">Entrar na administração</button>
         </form>
@@ -656,7 +675,8 @@ function FieldApp({
       setLastSaved(updated);
       setPage('protocolo');
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Não foi possível registrar a execução.');
+      if (saveError instanceof Error && saveError.message === 'Sessão encerrada. Entre novamente.') onLogout();
+      else setError(saveError instanceof Error ? saveError.message : 'Não foi possível registrar a execução.');
     } finally {
       setSaving(false);
     }
@@ -794,6 +814,8 @@ function FieldApp({
                   <strong>Impedimento registrado; a ordem continua pendente.</strong>
                   {order.motivoImpedimento && <span>{order.motivoImpedimento}</span>}
                   {order.observacao && <span>{order.observacao}</span>}
+                  {order.protocolo && <span>Protocolo: {order.protocolo}</span>}
+                  {order.registradoPor && <span>Registrado por: {order.registradoPor} · {formatDate(order.dataRegistro)}</span>}
                   {order.foto && <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} />}
                 </div>
               )}
@@ -808,7 +830,7 @@ function FieldApp({
               )}
               <details className="order-extra-details">
                 <summary>Ver detalhes</summary>
-                <div><Detail label="Barramento" value={order.barramento || '—'} /><Detail label="Empresa" value={companyLabel(order.empresa) || '—'} /><Detail label="Equipe" value={order.equipe} /><Detail label="Avanço" value={order.avanco || '—'} /><Detail label="Responsável" value={order.responsavel || '—'} /></div>
+                <div><Detail label="Barramento" value={order.barramento || '—'} /><Detail label="Empresa" value={companyLabel(order.empresa) || '—'} /><Detail label="Equipe" value={order.equipe} /><Detail label="Avanço" value={order.avanco || '—'} /><Detail label="Responsável" value={order.responsavel || '—'} /><SpreadsheetFields order={order} /></div>
               </details>
             </article>
           ))}
@@ -828,8 +850,34 @@ function OrderSummary({ order }: { order: Order }) {
       <p>{order.endereco || [order.alimentador, order.barramento].filter(Boolean).join(' · ')}</p>
       <div className="summary-location"><span>Alimentador: {order.alimentador || '—'}</span><span>Barramento: {order.barramento || '—'}</span></div>
       <strong>Previsto: {order.qtdAjustada || '—'}</strong>
+      <SpreadsheetDetails order={order} />
     </section>
   );
+}
+
+const mappedSpreadsheetHeaders = new Set([
+  'ALIMENTADOR', 'ALIM', 'BARRAMENTO', 'BARRA', 'QTD AJUSTADA', 'QUANT AJUSTADA',
+  'QUANTIDADE AJUSTADA', 'QTD PREVISTA', 'QUANTIDADE', 'QUANT', 'QTD', 'KM PLANO', 'NUM CONSEQUENCIA',
+  'NUMERO DA ORDEM', 'ORDEM', 'OS', 'EMPRESA', 'CONTRATADA', 'EQUIPE', 'TURMA', 'SERVICO',
+  'DEFEITO', 'TIPO EMR', 'TIPO DE REDE', 'DESCRICAO DO SERVICO', 'DESCRICAO', 'AVANCO', 'PROGRESSO',
+  'RESPONSAVEL', 'ENCARREGADO', 'ENDERECO', 'LOCAL',
+]);
+
+function spreadsheetFields(order: Order): [string, string][] {
+  return Object.entries(order.original || {}).filter(([header, value]) =>
+    Boolean(header.trim() && value.trim()) && !mappedSpreadsheetHeaders.has(normalizeHeader(header)));
+}
+
+function SpreadsheetFields({ order }: { order: Order }) {
+  const fields = spreadsheetFields(order);
+  if (fields.length === 0) return null;
+  return <div className="spreadsheet-fields">{fields.map(([label, value]) => <Detail key={label} label={label} value={value} />)}</div>;
+}
+
+function SpreadsheetDetails({ order }: { order: Order }) {
+  const count = spreadsheetFields(order).length;
+  if (count === 0) return null;
+  return <details className="spreadsheet-details"><summary>Outros dados da planilha ({count})</summary><SpreadsheetFields order={order} /></details>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
@@ -928,7 +976,10 @@ function AdminApp({
         </nav>
         <div className="sidebar-bottom">
           <span className="admin-label"><span className="online-dot" />Supervisor</span>
-          <button className="sidebar-text-button logout-button" onClick={onLogout}>Sair da administração</button>
+          <button className="sidebar-text-button logout-button" onClick={() => {
+            if ((saveStatus === 'saving' || saveStatus === 'error') && !window.confirm('Há alterações ainda sem confirmação do servidor. Deseja sair mesmo assim?')) return;
+            onLogout();
+          }}>Sair da administração</button>
         </div>
       </aside>
 
@@ -952,11 +1003,12 @@ function AdminApp({
           </div>
         </header>
 
-        {page === 'painel' && <Dashboard orders={orders} setSearch={setSearch} setTeamFilter={setTeamFilter} setStatusFilter={setStatusFilter} setServiceFilter={setServiceFilter} setPage={setPage} />}
+        {page === 'painel' && <Dashboard orders={orders} search={search} setSearch={setSearch} setTeamFilter={setTeamFilter} setStatusFilter={setStatusFilter} setServiceFilter={setServiceFilter} setPage={setPage} />}
         {page === 'controle' && <ControlPage orders={orders} />}
         {page === 'ordens' && (
           <OrdersPage
             orders={filteredOrders}
+            allOrders={orders}
             query={search}
             setQuery={setSearch}
             teamFilter={teamFilter}
@@ -965,11 +1017,12 @@ function AdminApp({
             setStatusFilter={setStatusFilter}
             serviceFilter={serviceFilter}
             setServiceFilter={setServiceFilter}
+            onClearFilters={() => { setSearch(''); setTeamFilter(''); setStatusFilter(''); setServiceFilter(''); }}
             onExport={exportCurrent}
           />
         )}
         {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} onExportPortfolio={exportPortfolioForReplacement} onClearPortfolio={onClearPortfolio} onImportSupplemental={onImportSupplemental} saveStatus={saveStatus} />}
-        {page === 'protocolos' && <ProtocolsPage orders={orders} />}
+        {page === 'protocolos' && <ProtocolsPage />}
         {page === 'acessos' && <AccessPage orders={orders} profiles={profiles} setProfiles={setProfiles} saveStatus={saveStatus} saveError={saveError} onRetrySave={onRetrySave} created={createdProfile} setCreated={setCreatedProfile} />}
       </div>
     </div>
@@ -978,6 +1031,7 @@ function AdminApp({
 
 function Dashboard({
   orders,
+  search,
   setSearch,
   setTeamFilter,
   setStatusFilter,
@@ -985,6 +1039,7 @@ function Dashboard({
   setPage,
 }: {
   orders: Order[];
+  search: string;
   setSearch: (value: string) => void;
   setTeamFilter: (value: string) => void;
   setStatusFilter: (value: string) => void;
@@ -1020,7 +1075,7 @@ function Dashboard({
     <main className="admin-content">
       <section className="stats-grid">
         <StatCard title="Ordens importadas" value={orders.length.toLocaleString('pt-BR')} detail="na carteira ativa" />
-        <StatCard title="Executadas" value={executed.toLocaleString('pt-BR')} detail="no período selecionado" tone="success" onClick={() => quickFilter('executada')} />
+        <StatCard title="Executadas" value={executed.toLocaleString('pt-BR')} detail="na carteira atual" tone="success" onClick={() => quickFilter('executada')} />
         <StatCard title="Impedimentos" value={impediments.toLocaleString('pt-BR')} detail="ordens que seguem pendentes" tone="warning" onClick={() => quickFilter('impedimento')} />
         <StatCard title="Equipes ativas" value={teams.length.toLocaleString('pt-BR')} detail="com ordens liberadas" />
       </section>
@@ -1028,7 +1083,7 @@ function Dashboard({
       <section className="panel consolidated-panel">
         <div className="panel-heading"><h2>Efetivação dos serviços</h2><span className="demo-tag">Carteira ativa</span></div>
         <div className="filter-row">
-          <label className="search-field admin-search"><span>⌕</span><input placeholder="Buscar OS, equipe ou protocolo" onChange={(event) => { setSearch(event.target.value); setPage('ordens'); }} /></label>
+          <form className="search-field admin-search" onSubmit={(event) => { event.preventDefault(); setPage('ordens'); }}><span aria-hidden="true">⌕</span><input value={search} placeholder="Buscar e pressione Enter" onChange={(event) => setSearch(event.target.value)} /></form>
           <select aria-label="Filtrar equipe" onChange={(event) => { setTeamFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team}>{team}</option>)}</select>
           <select aria-label="Filtrar serviço" onChange={(event) => { setServiceFilter(event.target.value); setPage('ordens'); }}><option value="">Todos os serviços</option>{[...new Set(orders.map((order) => order.servico).filter((service) => Boolean(service) && !isCancelOrderValue(service)))].map((service) => <option key={service}>{service}</option>)}</select>
           <select aria-label="Filtrar situação" onChange={(event) => { setStatusFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as situações</option><option value="pendente">Pendente</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
@@ -1039,7 +1094,7 @@ function Dashboard({
       </section>
 
       <section className="panel progress-panel">
-        <div className="panel-heading"><h2>Efetivação por equipe</h2><span className="muted small">Ordens concluídas no período</span></div>
+        <div className="panel-heading"><h2>Efetivação por equipe</h2><span className="muted small">Ordens concluídas na carteira</span></div>
         <div className="progress-grid">
           {teamStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}
         </div>
@@ -1055,6 +1110,8 @@ function Dashboard({
 }
 
 function ControlPage({ orders }: { orders: Order[] }) {
+  const [showAllServices, setShowAllServices] = useState(false);
+  const [showAllResponsibles, setShowAllResponsibles] = useState(false);
   const executed = orders.filter((order) => order.status === 'executada').length;
   const impediments = orders.filter(hasReportedImpediment).length;
   const pending = orders.filter((order) => order.status === 'pendente').length;
@@ -1083,24 +1140,30 @@ function ControlPage({ orders }: { orders: Order[] }) {
     if (existing) existing.orders.push(order);
     else responsibleGroups.set(key, { label: company ? company + ' • ' + responsible : responsible, orders: [order] });
   });
-  const responsibleStats = [...responsibleGroups.values()].map(({ label, orders: groupOrders }) => {
+  const allResponsibleStats = [...responsibleGroups.values()].map(({ label, orders: groupOrders }) => {
     const complete = groupOrders.filter((order) => order.status === 'executada').length;
     return { label, complete, total: groupOrders.length, percent: groupOrders.length ? Math.round(complete / groupOrders.length * 100) : 0 };
-  }).sort((a, b) => b.total - a.total).slice(0, 10);
+  }).sort((a, b) => b.total - a.total);
+  const responsibleStats = showAllResponsibles ? allResponsibleStats : allResponsibleStats.slice(0, 10);
 
   const serviceGroups = new Map<string, Order[]>();
   orders.forEach((order) => {
     const service = order.servico.trim() || 'Sem serviço';
-    const group = serviceGroups.get(service) ?? [];
+    const unit = quantityUnit(order.qtdAjustada) || 'unidades';
+    const key = `${service}\u0000${normalize(unit)}`;
+    const group = serviceGroups.get(key) ?? [];
     group.push(order);
-    serviceGroups.set(service, group);
+    serviceGroups.set(key, group);
   });
-  const quantityStats = [...serviceGroups.entries()].map(([label, groupOrders]) => {
+  const allQuantityStats = [...serviceGroups.entries()].map(([key, groupOrders]) => {
+    const [service, unitKey] = key.split('\u0000');
+    const unit = quantityUnit(groupOrders[0]?.qtdAjustada) || (unitKey === 'unidades' ? 'unidades' : unitKey);
     const planned = groupOrders.reduce((sum, order) => sum + parseQuantity(order.qtdAjustada), 0);
     const reported = groupOrders.reduce((sum, order) => sum + (order.qtdExecutada ?? 0), 0);
     const considered = groupOrders.reduce((sum, order) => sum + (order.status === 'executada' ? order.qtdExecutada ?? 0 : 0), 0);
-    return { label, planned, reported, considered };
-  }).sort((a, b) => b.considered - a.considered).slice(0, 8);
+    return { label: `${service} · ${unit}`, planned, reported, considered };
+  }).sort((a, b) => b.considered - a.considered);
+  const quantityStats = showAllServices ? allQuantityStats : allQuantityStats.slice(0, 8);
   const maxQuantity = Math.max(1, ...quantityStats.map((item) => Math.max(item.planned, item.reported)));
   const quantityText = (value: number) => value.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 
@@ -1138,7 +1201,7 @@ function ControlPage({ orders }: { orders: Order[] }) {
 
       <section className="control-chart-grid">
         <div className="panel">
-          <div className="panel-heading"><div><h2>Quantidades por serviço</h2><p className="muted">Previsto e informado pela equipe</p></div></div>
+          <div className="panel-heading"><div><h2>Quantidades por serviço</h2><p className="muted">Previsto e informado, separado por unidade</p></div>{allQuantityStats.length > 8 && <button className="text-button" onClick={() => setShowAllServices((value) => !value)}>{showAllServices ? 'Mostrar principais' : `Ver todos (${allQuantityStats.length})`}</button>}</div>
           <div className="quantity-chart-legend"><span><i className="status-dot dot-plan" />QTD. ajustada</span><span><i className="status-dot dot-reported" />QTD. executada</span></div>
           {quantityStats.length ? <div className="quantity-chart-list">
             {quantityStats.map((item) => (
@@ -1153,7 +1216,7 @@ function ControlPage({ orders }: { orders: Order[] }) {
         </div>
 
         <div className="panel">
-          <div className="panel-heading"><div><h2>Execução por responsável</h2><p className="muted">Ordens concluídas vinculadas a cada responsável</p></div></div>
+          <div className="panel-heading"><div><h2>Execução por responsável</h2><p className="muted">Ordens concluídas vinculadas a cada responsável</p></div>{allResponsibleStats.length > 10 && <button className="text-button" onClick={() => setShowAllResponsibles((value) => !value)}>{showAllResponsibles ? 'Mostrar principais' : `Ver todos (${allResponsibleStats.length})`}</button>}</div>
           {responsibleStats.length
             ? <div className="progress-grid control-progress-grid">{responsibleStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}</div>
             : <p className="chart-empty">Nenhum responsável foi identificado na carteira.</p>}
@@ -1195,28 +1258,32 @@ function ProgressBar({ label, complete, total, percent }: { label: string; compl
 
 function OrderTable({ orders }: { orders: Order[] }) {
   return (
-    <div className="table-scroll">
-      <table className="admin-table">
-        <thead><tr><th>OS</th><th>Equipe</th><th>Serviço</th><th>Previsto</th><th>Executado</th><th>Situação</th><th>Protocolo</th><th>Problema relatado</th><th>Evidência</th></tr></thead>
-        <tbody>
-          {orders.map((order) => (
-            <tr key={order.id}>
-              <td data-label="OS">OS {order.numConsequencia}</td><td data-label="Equipe">{order.equipe}</td><td data-label="Serviço">{order.servico}</td><td data-label="Previsto">{order.qtdAjustada || '—'}</td>
-              <td data-label="Executado">{order.qtdExecutada === undefined ? '—' : order.qtdExecutada + (quantityUnit(order.qtdAjustada) ? ' ' + quantityUnit(order.qtdAjustada) : '')}</td>
-              <td data-label="Situação"><StatusBadge status={order.status} /></td><td data-label="Protocolo">{order.protocolo || '—'}</td>
-              <td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td>
-              <td data-label="Evidência">{hasReportedImpediment(order) && order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td>
-            </tr>
-          ))}
-          {orders.length === 0 && <tr><td colSpan={9} className="table-empty">Nenhuma ordem para exibir.</td></tr>}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <div className="table-scroll">
+        <table className="admin-table">
+          <thead><tr><th>OS</th><th>Equipe</th><th>Serviço</th><th>Previsto</th><th>Executado</th><th>Situação</th><th>Protocolo</th><th>Problema relatado</th><th>Evidência</th></tr></thead>
+          <tbody>
+            {orders.map((order) => (
+              <tr key={order.id}>
+                <td data-label="OS"><span>OS {order.numConsequencia}</span><SpreadsheetDetails order={order} /></td><td data-label="Equipe">{order.equipe}</td><td data-label="Serviço">{order.servico}</td><td data-label="Previsto">{order.qtdAjustada || '—'}</td>
+                <td data-label="Executado">{order.qtdExecutada === undefined ? '—' : order.qtdExecutada + (quantityUnit(order.qtdAjustada) ? ' ' + quantityUnit(order.qtdAjustada) : '')}</td>
+                <td data-label="Situação"><StatusBadge status={order.status} /></td><td data-label="Protocolo">{order.protocolo || '—'}</td>
+                <td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td>
+                <td data-label="Evidência">{hasReportedImpediment(order) && order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td>
+              </tr>
+            ))}
+            {orders.length === 0 && <tr><td colSpan={9} className="table-empty">Nenhuma ordem para exibir.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <p className="table-scroll-hint">Deslize horizontalmente para consultar todas as colunas.</p>
+    </>
   );
 }
 
 function OrdersPage({
   orders,
+  allOrders,
   query,
   setQuery,
   teamFilter,
@@ -1225,9 +1292,11 @@ function OrdersPage({
   setStatusFilter,
   serviceFilter,
   setServiceFilter,
+  onClearFilters,
   onExport,
 }: {
   orders: Order[];
+  allOrders: Order[];
   query: string;
   setQuery: (value: string) => void;
   teamFilter: string;
@@ -1236,17 +1305,20 @@ function OrdersPage({
   setStatusFilter: (value: string) => void;
   serviceFilter: string;
   setServiceFilter: (value: string) => void;
+  onClearFilters: () => void;
   onExport: () => void;
 }) {
-  const teams = [...new Set(orders.map((order) => order.equipe).filter((team) => Boolean(team) && !isCancelOrderValue(team)))];
+  const teams = [...new Set(allOrders.map((order) => order.equipe).filter((team) => Boolean(team) && !isCancelOrderValue(team)))];
+  const services = [...new Set(allOrders.map((order) => order.servico).filter((service) => Boolean(service) && !isCancelOrderValue(service)))];
+  const hasFilters = Boolean(query || teamFilter || statusFilter || serviceFilter);
   return (
     <main className="admin-content">
       <section className="panel orders-panel">
-        <div className="panel-heading"><div><h2>Ordens da carteira</h2><p className="muted">{orders.length} registros na seleção atual</p></div><button className="button button-secondary" onClick={onExport}>Exportar seleção</button></div>
+        <div className="panel-heading"><div><h2>Ordens da carteira</h2><p className="muted">{orders.length.toLocaleString('pt-BR')} registros na seleção atual</p></div><div className="orders-heading-actions">{hasFilters && <button className="text-button" onClick={onClearFilters}>Limpar filtros</button>}<button className="button button-secondary" onClick={onExport}>Exportar seleção</button></div></div>
         <div className="filter-row orders-filter-row">
           <label className="search-field admin-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OS, equipe, responsável ou protocolo" /></label>
           <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team}>{team}</option>)}</select>
-          <select value={serviceFilter} onChange={(event) => setServiceFilter(event.target.value)}><option value="">Todos os serviços</option>{[...new Set(orders.map((order) => order.servico).filter((service) => Boolean(service) && !isCancelOrderValue(service)))].map((service) => <option key={service}>{service}</option>)}</select>
+          <select value={serviceFilter} onChange={(event) => setServiceFilter(event.target.value)}><option value="">Todos os serviços</option>{services.map((service) => <option key={service}>{service}</option>)}</select>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todas as situações</option><option value="pendente">Pendente</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
         </div>
         <OrderTable orders={orders} />
@@ -1287,13 +1359,17 @@ function ImportPage({
   const rows = useMemo(() => file && sheetName ? rowsFromSheet(file.workbook, sheetName) : [], [file, sheetName]);
   const orderRows = useMemo(() => rows.map((row) => mapSpreadsheetRow(row, ''))
     .filter((row) => row.numConsequencia.trim()), [rows]);
+  const cancellationRows = useMemo(() => orderRows.filter(isCancellationOrder), [orderRows]);
   const validRows = useMemo(() => orderRows.filter((row) =>
-    Boolean(row.empresa.trim() && row.responsavel.trim() && row.equipe.trim())), [orderRows]);
+    !isCancellationOrder(row) && Boolean(row.empresa.trim() && row.responsavel.trim() && row.equipe.trim())), [orderRows]);
   const supplementalRows = useMemo(() => validRows.filter((row) => Boolean(row.servico.trim() && row.qtdAjustada.trim())), [validRows]);
   const rowsToPreview = importMode === 'complementar' ? supplementalRows : validRows;
   const excludedRows = orderRows.length - rowsToPreview.length;
+  const excludedIncompleteRows = Math.max(0, excludedRows - cancellationRows.length);
   const mappedPreview = rowsToPreview.slice(0, 4);
-  const columns = rows[0] ? Object.keys(rows[0].values) : [];
+  const columns = file && sheetName ? headersFromSheet(file.workbook, sheetName) : [];
+  const duplicateHeaders = [...new Set(columns.filter(Boolean).filter((header, index) =>
+    columns.findIndex((candidate) => normalizeHeader(candidate) === normalizeHeader(header)) !== index))];
 
   async function onFile(event: ChangeEvent<HTMLInputElement>) {
     const selectedFile = event.target.files?.[0];
@@ -1312,6 +1388,10 @@ function ImportPage({
       }
       setFile(workbook);
       setSheetName(selectedSheet);
+      const headers = headersFromSheet(workbook.workbook, selectedSheet);
+      const repeated = [...new Set(headers.filter(Boolean).filter((header, index) =>
+        headers.findIndex((candidate) => normalizeHeader(candidate) === normalizeHeader(header)) !== index))];
+      if (repeated.length) setError(`Cabeçalhos repetidos impedem identificar todos os campos: ${repeated.join(', ')}. Renomeie as colunas repetidas na planilha e selecione o arquivo novamente.`);
     } catch {
       setError('Não consegui ler essa planilha. Selecione um arquivo .xlsx válido.');
       setFile(null);
@@ -1364,6 +1444,10 @@ function ImportPage({
   }
 
   async function importRows() {
+    if (duplicateHeaders.length) {
+      setError(`Cabeçalhos repetidos impedem importar os dados com segurança: ${duplicateHeaders.join(', ')}. Renomeie as colunas e selecione o arquivo novamente.`);
+      return;
+    }
     if (!file || rows.length === 0 || !sheetName) {
       setError(importMode === 'complementar' ? 'Selecione a planilha com as ordens que serão acrescentadas.' : 'Selecione a planilha da carteira geral.');
       return;
@@ -1379,7 +1463,7 @@ function ImportPage({
       setImporting(true);
       setError('');
       setMessage('');
-      const additions = orderRows.map((mapped) => ({
+      const additions = orderRows.filter((mapped) => !isCancellationOrder(mapped)).map((mapped) => ({
         ...mapped,
         qtdExecutada: undefined,
         sourceColumns: columns,
@@ -1389,7 +1473,7 @@ function ImportPage({
       }));
       try {
         const result = await onImportSupplemental({ fileName: file.fileName, sheetName, sourceColumns: columns, orders: additions });
-        setMessage(`${result.addedCount.toLocaleString('pt-BR')} nova(s) ordem(ns) acrescentada(s) à carteira.${result.duplicateCount ? ` ${result.duplicateCount} já existia(m) e não foi(ram) duplicada(s).` : ''}${result.excludedCount ? ` ${result.excludedCount} linha(s) incompleta(s) foram ignoradas.` : ''}`);
+        setMessage(`${result.addedCount.toLocaleString('pt-BR')} nova(s) ordem(ns) acrescentada(s) à carteira.${result.duplicateCount ? ` ${result.duplicateCount} já existia(m) e não foi(ram) duplicada(s).` : ''}${result.excludedCount ? ` ${result.excludedCount} linha(s) incompleta(s) ou inválida(s) foram ignoradas.` : ''}${cancellationRows.length ? ` ${cancellationRows.length} linha(s) “CANCELAR ORDEM” foram desconsideradas.` : ''}`);
         setFile(null);
         setSheetName('');
       } catch (importError) {
@@ -1454,7 +1538,7 @@ function ImportPage({
     setImports([record, ...imports.filter((item) => !item.id.startsWith('import-demo'))]);
     setAuditSnapshot(null);
     setPortfolioDeleted(false);
-    setMessage(`${nextOrders.length.toLocaleString('pt-BR')} ordens importadas da carteira geral.${excludedRows ? ` ${excludedRows} linha(s) com EMPRESA, EQUIPE ou RESPONSÁVEL vazios foram ignoradas.` : ''}`);
+    setMessage(`${nextOrders.length.toLocaleString('pt-BR')} ordens importadas da carteira geral.${excludedIncompleteRows ? ` ${excludedIncompleteRows} linha(s) com EMPRESA, EQUIPE ou RESPONSÁVEL vazios foram ignoradas.` : ''}${cancellationRows.length ? ` ${cancellationRows.length} linha(s) “CANCELAR ORDEM” foram desconsideradas.` : ''}`);
     setError('');
   }
 
@@ -1481,6 +1565,7 @@ function ImportPage({
               <div className="file-selected"><div><strong>{file.fileName}</strong><small>{rowsToPreview.length.toLocaleString('pt-BR')} ordens válidas · {columns.length} colunas{excludedRows ? ` · ${excludedRows} linha(s) serão ignoradas` : ''}</small></div>
                 <span>{sheetName}</span>
               </div>
+              {duplicateHeaders.length > 0 && <div className="inline-error" role="alert">Cabeçalhos repetidos: {duplicateHeaders.join(', ')}. Renomeie cada coluna na planilha para que nenhum campo seja perdido.</div>}
               <div className="import-preview">
                 <div className="import-preview-heading">
                   <strong>Conferência antes de importar</strong>
@@ -1491,7 +1576,7 @@ function ImportPage({
                 </table></div>
                 {excludedRows > 0 && <p className="table-note">{excludedRows} linha(s) incompleta(s) serão ignoradas{importMode === 'complementar' ? ' por falta de número, empresa, equipe, responsável, serviço ou quantidade ajustada.' : ' por falta de número, empresa, equipe ou responsável.'}</p>}
               </div>
-              <div className="import-actions"><span>{importMode === 'complementar' ? 'Novas linhas precisam ter número, empresa, equipe, responsável, serviço e quantidade.' : 'Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não serão incluídas.'}</span><button className="button button-primary" disabled={importing || (importMode === 'substituir' && orders.length > 0)} onClick={() => { void importRows(); }}>{importing ? 'Importando…' : importMode === 'complementar' ? 'Acrescentar à carteira atual' : orders.length > 0 ? 'Exclua a carteira atual primeiro' : 'Importar carteira do novo mês'}</button></div>
+              <div className="import-actions"><span>{importMode === 'complementar' ? 'Novas linhas precisam ter número, empresa, equipe, responsável, serviço e quantidade.' : 'Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não serão incluídas.'}</span><button className="button button-primary" disabled={importing || duplicateHeaders.length > 0 || (importMode === 'substituir' && orders.length > 0)} onClick={() => { void importRows(); }}>{importing ? 'Importando…' : importMode === 'complementar' ? 'Acrescentar à carteira atual' : orders.length > 0 ? 'Exclua a carteira atual primeiro' : 'Importar carteira do novo mês'}</button></div>
             </>
           )}
           {message && <div className="inline-success">{message}</div>}
@@ -1516,16 +1601,43 @@ function ImportPage({
   );
 }
 
-function ProtocolsPage({ orders }: { orders: Order[] }) {
-  const recorded = orders.filter((order) => order.protocolo);
+function ProtocolsPage() {
+  const [records, setRecords] = useState<Order[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function loadRecords(nextCursor: string | null, append: boolean) {
+    if (loading) return;
+    setLoading(true);
+    setError('');
+    try {
+      const query = nextCursor ? `?cursor=${encodeURIComponent(nextCursor)}` : '';
+      const result = await apiRequest<{ records: Order[]; hasMore: boolean; nextCursor: string | null }>(`/api/admin/executions${query}`);
+      setRecords((current) => append ? [...current, ...result.records] : result.records);
+      setCursor(result.nextCursor);
+      setHasMore(result.hasMore);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar os registros.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void loadRecords(null, false); }, []);
+
   return (
     <main className="admin-content">
       <section className="panel orders-panel">
-        <div className="panel-heading"><div><h2>Registros de auditoria</h2><p className="muted">Execuções e impedimentos enviados pelas equipes.</p></div><span className="count-chip">{recorded.length} protocolos</span></div>
+        <div className="panel-heading"><div><h2>Histórico de auditoria</h2><p className="muted">{records.length.toLocaleString('pt-BR')} registros carregados, incluindo novas tentativas da mesma ordem.</p></div><div className="orders-heading-actions"><button className="button button-secondary" onClick={() => { void loadRecords(null, false); }} disabled={loading}>{loading ? 'Carregando…' : 'Atualizar'}</button></div></div>
+        {error && <div className="inline-error" role="alert">{error}</div>}
         <div className="table-scroll"><table className="admin-table protocols-table"><thead><tr><th>Protocolo</th><th>Ordem</th><th>Equipe</th><th>Responsável</th><th>Registrado por</th><th>Resultado do registro</th><th>Problema relatado</th><th>Evidência</th><th>Data</th></tr></thead>
-          <tbody>{recorded.map((order) => <tr key={order.id}><td data-label="Protocolo" className="protocol-cell">{order.protocolo}</td><td data-label="Ordem">{order.numConsequencia}</td><td data-label="Equipe">{order.equipe}</td><td data-label="Responsável">{order.responsavel || '—'}</td><td data-label="Registrado por">{order.registradoPor || '—'}</td><td data-label="Resultado do registro"><StatusBadge status={reportedStatus(order)} /></td><td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td><td data-label="Evidência">{order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td><td data-label="Data">{formatDate(order.dataRegistro)}</td></tr>)}{recorded.length === 0 && <tr><td colSpan={9} className="table-empty">Nenhum protocolo registrado.</td></tr>}</tbody>
+          <tbody>{records.map((order) => <tr key={order.protocolo || order.id}><td data-label="Protocolo" className="protocol-cell">{order.protocolo}</td><td data-label="Ordem">{order.numConsequencia}<SpreadsheetDetails order={order} /></td><td data-label="Equipe">{order.equipe}</td><td data-label="Responsável">{order.responsavel || '—'}</td><td data-label="Registrado por">{order.registradoPor || '—'}</td><td data-label="Resultado do registro"><StatusBadge status={reportedStatus(order)} /></td><td data-label="Problema relatado" className="issue-cell">{hasReportedImpediment(order) ? <><strong>{order.motivoImpedimento || 'Impedimento'}</strong>{order.observacao && <span>{order.observacao}</span>}</> : '—'}</td><td data-label="Evidência">{order.foto ? <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} /> : '—'}</td><td data-label="Data">{formatDate(order.dataRegistro)}</td></tr>)}{records.length === 0 && !loading && !error && <tr><td colSpan={9} className="table-empty">Nenhum protocolo registrado.</td></tr>}</tbody>
         </table></div>
-        <div className="protocol-footnote">Cada protocolo conserva a identificação da ordem, equipe, responsável, operador e horário do registro.</div>
+        <p className="table-scroll-hint">Deslize horizontalmente para consultar todas as colunas.</p>
+        {hasMore && <div className="orders-load-more"><button className="button button-secondary" disabled={loading || !cursor} onClick={() => { void loadRecords(cursor, true); }}>{loading ? 'Carregando…' : 'Carregar mais registros'}</button></div>}
+        <div className="protocol-footnote">Cada tentativa é exibida separadamente e mantém seu protocolo, responsável, operador, horário e evidência.</div>
       </section>
     </main>
   );

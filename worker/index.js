@@ -1,3 +1,5 @@
+import { parseNumericQuantity } from '../src/lib/quantity.js';
+
 const SESSION_COOKIE = 'neo_session';
 const SESSION_SECONDS = 60 * 60 * 12;
 const PASSWORD_HASH_ITERATIONS = 100000;
@@ -13,6 +15,15 @@ function json(data, status = 200, headers = {}) {
 
 function normalize(value) {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function isCancelOrderValue(value) {
+  return /^cancelar\s+(?:a\s+)?ordem$/.test(normalize(value));
+}
+
+function isCancellationOrder(order) {
+  return [order?.empresa, order?.equipe, order?.responsavel, order?.servico, ...Object.values(order?.original || {})]
+    .some(isCancelOrderValue);
 }
 
 function canonicalCompany(value) {
@@ -225,6 +236,25 @@ async function readIncrementalState(env, session, url) {
   return { orders, profiles: [], imports: [], notifications, sync: cursor, full: false, unchanged: orders.length === 0 && notifications.length === 0 };
 }
 
+async function readAdminExecutions(env, url) {
+  const rawCursor = url.searchParams.get('cursor');
+  const cursor = rawCursor === null ? null : Number(rawCursor);
+  if (rawCursor !== null && (!Number.isSafeInteger(cursor) || cursor < 1)) {
+    return json({ error: 'O marcador do histórico é inválido.' }, 400);
+  }
+  const limit = 100;
+  const result = cursor === null
+    ? await env.DB.prepare('SELECT rowid AS record_cursor, payload_json FROM execution_records ORDER BY rowid DESC LIMIT ?1').bind(limit + 1).all()
+    : await env.DB.prepare('SELECT rowid AS record_cursor, payload_json FROM execution_records WHERE rowid < ?1 ORDER BY rowid DESC LIMIT ?2').bind(cursor, limit + 1).all();
+  const hasMore = result.results.length > limit;
+  const page = result.results.slice(0, limit);
+  return json({
+    records: page.map((row) => JSON.parse(row.payload_json)),
+    hasMore,
+    nextCursor: page.length ? String(page[page.length - 1].record_cursor) : null,
+  });
+}
+
 async function requireSession(request, env) {
   const session = await readSession(request, env);
   if (!session) return { error: json({ error: 'Sessão encerrada. Entre novamente.' }, 401) };
@@ -321,7 +351,7 @@ async function login(request, env) {
 
 async function saveAdminState(request, env) {
   const body = await request.json();
-  const orders = Array.isArray(body.orders) ? body.orders : [];
+  const orders = Array.isArray(body.orders) ? body.orders.filter((order) => !isCancellationOrder(order)) : [];
   const profiles = Array.isArray(body.profiles) ? body.profiles : [];
   const imports = Array.isArray(body.imports) ? body.imports : [];
   const changedParts = Array.isArray(body.changedParts)
@@ -463,6 +493,10 @@ async function addSupplementalOrders(request, env) {
   const rows = [];
   let excludedCount = 0;
   for (const raw of incoming) {
+    if (isCancellationOrder(raw)) {
+      excludedCount += 1;
+      continue;
+    }
     const numConsequencia = text(raw.numConsequencia, 100);
     const companyInput = normalize(raw.empresa);
     const empresa = companyInput === 'vencer' ? 'Vencer' : companyInput === 'neoenergia' || companyInput === 'nper' ? 'Neoenergia' : '';
@@ -470,8 +504,8 @@ async function addSupplementalOrders(request, env) {
     const responsavel = text(raw.responsavel, 200);
     const servico = text(raw.servico, 300);
     const qtdAjustada = text(raw.qtdAjustada, 80);
-    const quantityMatch = qtdAjustada.replace(',', '.').match(/-?\d+(?:\.\d+)?/);
-    if (!numConsequencia || !empresa || !equipe || !responsavel || !servico || !quantityMatch || Number(quantityMatch[0]) <= 0) {
+    const quantity = parseNumericQuantity(qtdAjustada);
+    if (!numConsequencia || !empresa || !equipe || !responsavel || !servico || quantity === null || quantity <= 0) {
       excludedCount += 1;
       continue;
     }
@@ -561,7 +595,7 @@ async function updateExecution(request, env, session) {
   const observation = String(body.observacao || '').trim();
   const reason = status === 'impedimento' ? String(body.motivoImpedimento || '').trim() : '';
   if (status === 'impedimento' && (!reason || !observation)) return json({ error: 'Informe o motivo e a observação do impedimento.' }, 400);
-  const planned = Number(String(order.qtdAjustada || '').replace(',', '.').match(/-?\d+(?:\.\d+)?/)?.[0] || 0);
+  const planned = parseNumericQuantity(order.qtdAjustada) ?? 0;
   if (status === 'executada' && quantity < planned && !observation) return json({ error: 'Explique por que a quantidade executada ficou abaixo da ajustada.' }, 400);
 
   const protocol = makeProtocol();
@@ -647,6 +681,10 @@ async function route(request, env) {
   const auth = await requireSession(request, env);
   if (auth.error) return auth.error;
   const { session } = auth;
+  if (path === '/api/admin/executions' && request.method === 'GET') {
+    if (!session.isAdmin) return json({ error: 'Apenas o supervisor pode consultar o histórico completo.' }, 403);
+    return readAdminExecutions(env, url);
+  }
   if (path === '/api/state' && request.method === 'GET') return json(await readIncrementalState(env, session, url));
   if (path === '/api/admin/state' && request.method === 'POST') {
     if (!session.isAdmin) return json({ error: 'Apenas o supervisor pode alterar a carteira.' }, 403);

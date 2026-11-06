@@ -127,6 +127,10 @@ h1, h2, h3, p { margin-top: 0; }
 .order-extra-details { margin-top: 11px; border-top: 1px solid #edf1f2; padding-top: 10px; }
 .order-extra-details summary { color: var(--blue); cursor: pointer; font-size: 15px; font-weight: 700; }
 .order-extra-details > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; padding-top: 10px; }
+.spreadsheet-details { margin-top: 7px; }
+.spreadsheet-details summary { color: var(--blue); cursor: pointer; font-size: 15px; font-weight: 600; }
+.spreadsheet-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin-top: 5px; }
+.order-extra-details .spreadsheet-fields { grid-column: 1 / -1; }
 .detail-row { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; border-bottom: 1px solid #edf1f2; font-size: 15px; }
 .detail-row span { color: #71848d; }
 .detail-row strong { color: #2a4652; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
@@ -286,6 +290,10 @@ h1, h2, h3, p { margin-top: 0; }
 .responsible-progress { margin-top: 22px; padding-top: 18px; border-top: 1px solid #e9eff1; }
 .compact-heading { margin-bottom: 13px; }
 .orders-panel .panel-heading { align-items: flex-start; }
+.orders-heading-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.orders-load-more { display: flex; justify-content: center; margin: 14px 0 4px; }
+.orders-load-more .button { min-height: 40px; }
+.table-scroll-hint { margin: 7px 0 0; color: #71848d; font-size: 14px; }
 .orders-filter-row { margin: 14px 0; }
 .orders-filter-row .admin-search { flex: 1 1 260px; }
 .count-chip { border-color: #d7e7eb; color: #4f727e; background: #f4f9fa; }
@@ -427,6 +435,7 @@ h1, h2, h3, p { margin-top: 0; }
   .order-card h2 { font-size: 17px; }
   .order-card .button { min-height: 45px; }
   .order-extra-details > div { grid-template-columns: 1fr; gap: 3px; }
+  .spreadsheet-fields { grid-template-columns: 1fr; }
   .field-identity { margin-top: 14px; }
   .back-link { margin-top: 15px; }
   .order-summary { padding: 14px; }
@@ -508,11 +517,14 @@ h1, h2, h3, p { margin-top: 0; }
   .admin-table td.table-empty::before { content: none; }
   .admin-table .issue-cell { min-width: 0; max-width: none; }
   .admin-table .protocol-cell { overflow-wrap: anywhere; }
+  .table-scroll-hint { display: none; }
   .preview-table { min-width: 0; }
   .import-preview .table-scroll { max-height: none; }
 
   .orders-panel > .panel-heading { flex-wrap: wrap; }
   .orders-panel > .panel-heading > div { min-width: 0; }
+  .orders-heading-actions { justify-content: flex-start; }
+  .orders-heading-actions .button { min-height: 40px; }
   .progress-label { align-items: flex-start; flex-direction: column; gap: 4px; }
   .progress-label strong { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
   .progress-label span { overflow-wrap: anywhere; }

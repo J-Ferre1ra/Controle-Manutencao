@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
+    "test": "node --test",
     "preview": "vite preview --host 0.0.0.0",
-    "cf:db:create": "wrangler d1 create controle-ordens-neoenergia",
-    "cf:db:migrate:local": "wrangler d1 migrations apply controle-ordens-neoenergia --local",
-    "cf:db:migrate:remote": "wrangler d1 migrations apply controle-ordens-neoenergia --remote",
+    "cf:db:create": "wrangler d1 create controle-ordens",
+    "cf:db:migrate:local": "wrangler d1 migrations apply controle-ordens --local",
+    "cf:db:migrate:remote": "wrangler d1 migrations apply controle-ordens --remote",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {

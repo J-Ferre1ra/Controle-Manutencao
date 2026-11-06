@@ -1,5 +1,6 @@
 import type * as XLSX from 'xlsx';
 import type { Order, OrderStatus } from '../types';
+import { parseNumericQuantity } from './quantity.js';
 
 export interface ParsedWorkbook {
   workbook: XLSX.WorkBook;
@@ -68,7 +69,7 @@ function findValue(row: Record<string, unknown>, aliases: string[]): string {
   const entries = Object.entries(row);
   for (const alias of aliases) {
     const target = normalize(alias);
-    const match = entries.find(([key]) => normalize(key) === target);
+    const match = entries.find(([key, value]) => normalize(key) === target && Boolean(textValue(value)));
     if (match) return textValue(match[1]);
   }
   return '';
@@ -79,6 +80,22 @@ export async function readWorkbook(file: File): Promise<ParsedWorkbook> {
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: 'array', cellDates: true });
   return { workbook, sheetNames: workbook.SheetNames, fileName: file.name };
+}
+
+export function headersFromSheet(workbook: XLSX.WorkBook, sheetName: string): string[] {
+  const sheet = workbook.Sheets[sheetName];
+  const range = sheet?.['!ref']?.split(':');
+  if (!sheet || !range?.length) return [];
+  const start = cellPosition(range[0]);
+  const end = cellPosition(range[1] || range[0]);
+  if (!start || !end) return [];
+  const cellValue = (row: number, column: number): unknown => {
+    const cell = sheet[columnName(column) + (row + 1)] as { v?: unknown; w?: string } | undefined;
+    return cell?.w ?? cell?.v ?? '';
+  };
+  return Array.from({ length: end.column - start.column + 1 }, (_, index) =>
+    textValue(cellValue(start.row, start.column + index)),
+  );
 }
 
 export function rowsFromSheet(workbook: XLSX.WorkBook, sheetName: string): SpreadsheetRow[] {
@@ -93,9 +110,7 @@ export function rowsFromSheet(workbook: XLSX.WorkBook, sheetName: string): Sprea
     const cell = sheet[columnName(column) + (row + 1)] as { v?: unknown; w?: string } | undefined;
     return cell?.w ?? cell?.v ?? '';
   };
-  const headers = Array.from({ length: end.column - start.column + 1 }, (_, index) =>
-    textValue(cellValue(start.row, start.column + index)),
-  );
+  const headers = headersFromSheet(workbook, sheetName);
   return Array.from({ length: end.row - start.row }, (_, rowIndex) => {
     const row = start.row + rowIndex + 1;
     const values: Record<string, string> = {};
@@ -186,10 +201,28 @@ function columnsForTeam(orders: Order[]): string[] {
   return columns;
 }
 
+function uniqueWorksheetName(team: string, index: number, usedNames: Set<string>): string {
+  let base = team.trim() || `Equipe ${index + 1}`;
+  for (const character of [':', '\\', '/', '?', '*', '[', ']']) {
+    base = base.split(character).join('-');
+  }
+  base = base.replace(/^'+|'+$/g, '').slice(0, 31).trim() || `Equipe ${index + 1}`;
+
+  let name = base;
+  let suffix = 2;
+  while (usedNames.has(name.toLocaleLowerCase('pt-BR'))) {
+    const ending = ` (${suffix++})`;
+    name = `${base.slice(0, 31 - ending.length)}${ending}`;
+  }
+  usedNames.add(name.toLocaleLowerCase('pt-BR'));
+  return name;
+}
+
 export async function exportOrdersByTeam(orders: Order[], fileName = 'ordens-execucao.xlsx'): Promise<void> {
   const XLSX = await import('xlsx');
   const workbook = XLSX.utils.book_new();
   const teams = [...new Set(orders.map((order) => order.equipe || 'Sem equipe'))];
+  const usedSheetNames = new Set<string>();
   teams.forEach((team, index) => {
     const teamOrders = orders.filter((order) => (order.equipe || 'Sem equipe') === team);
     const columns = columnsForTeam(teamOrders);
@@ -214,7 +247,7 @@ export async function exportOrdersByTeam(orders: Order[], fileName = 'ordens-exe
       { wch: 20 }, { wch: 30 }, { wch: 14 }, { wch: 24 }, { wch: 18 }, { wch: 28 },
       { wch: 42 }, { wch: 24 }, { wch: 24 }, { wch: 24 },
     ];
-    XLSX.utils.book_append_sheet(workbook, sheet, (team || 'Equipe ' + (index + 1)).slice(0, 31));
+    XLSX.utils.book_append_sheet(workbook, sheet, uniqueWorksheetName(team, index, usedSheetNames));
   });
   XLSX.writeFile(workbook, fileName);
 }
@@ -249,15 +282,7 @@ const controlColumns = [
 ];
 
 function numericQuantity(value: string | number | undefined): number | null {
-  if (value === undefined || value === null || value === '') return null;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  const cleaned = value.trim().replace(/[^\d,.-]/g, '');
-  if (!cleaned) return null;
-  const normalized = cleaned.includes(',') && cleaned.includes('.')
-    ? cleaned.replace(/\./g, '').replace(',', '.')
-    : cleaned.replace(',', '.');
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
+  return parseNumericQuantity(value);
 }
 
 function formulaCell(sheet: XLSX.WorkSheet, address: string, formula: string, value: number, format?: string): void {

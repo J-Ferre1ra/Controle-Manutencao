@@ -4,7 +4,7 @@ Aplicação web responsiva em React e TypeScript. Em produção, a interface e a
 
 ## Sincronização
 
-Cada execução é salva no banco. As telas abertas consultam mudanças a cada 15 segundos e atualizam as ordens sem recarregar a página; ao voltar para uma aba que estava em segundo plano, ela consulta imediatamente. A carteira só é enviada completa quando muda a importação ou a configuração administrativa; as atualizações das equipes trazem apenas ordens alteradas desde a consulta anterior.
+Cada execução é salva no banco. As telas abertas consultam mudanças a cada 2 minutos e atualizam as ordens sem recarregar a página; ao voltar para uma aba que estava em segundo plano, ela consulta imediatamente. A carteira só é enviada completa quando muda a importação ou a configuração administrativa; as atualizações das equipes trazem apenas ordens alteradas desde a consulta anterior.
 
 O formulário de execução avisa antes de fechar ou recarregar a página quando há informações ainda não enviadas. O navegador exibe a confirmação padrão, sem permitir personalizar o texto.
 
@@ -44,7 +44,7 @@ O endereço final será informado pelo Wrangler. Depois do primeiro acesso admin
 
 ## Estimativa de uso e custo
 
-Com 60 aparelhos consultando a cada 15 segundos durante 12 horas por dia, o sistema fará cerca de 172.800 consultas diárias, ou 5,2 milhões por mês, apenas para sincronização. Isso excede a franquia diária do Workers Free. A tabela atual do Cloudflare informa que o Workers Paid custa no mínimo US$ 5 por mês e inclui 10 milhões de requisições mensais; chamadas acima desse volume e o uso de CPU podem gerar custo adicional. A franquia D1 para leitura é de 5 milhões de linhas por dia, e cada consulta normal de sincronização lê apenas a linha do cursor, além das ordens que tenham mudado. Consulte a [tabela oficial de preços do Cloudflare Workers e D1](https://developers.cloudflare.com/workers/platform/pricing/) antes de habilitar a cobrança.
+Como referência, 60 aparelhos ativos por 12 horas, consultando a cada 2 minutos, geram cerca de 21.600 consultas diárias ou 648 mil em 30 dias, sem contar login e registros. A sincronização incremental lê o cursor e somente as ordens alteradas. O Workers Paid inclui 10 milhões de requisições mensais; uso acima das franquias e outros produtos podem gerar cobrança adicional. Consulte a [tabela oficial de preços do Cloudflare Workers e D1](https://developers.cloudflare.com/workers/platform/pricing/) para os limites atuais.
 
 ## Dados e acesso
 
