@@ -873,7 +873,31 @@ function FieldApp({
               </details>
             </article>
           ))}
-          {filteredOrders.length === 0 && <div className="empty-state"><strong>Nenhuma ordem encontrada</strong><span>Confira a busca ou fale com o supervisor.</span></div>}
+          {filteredOrders.length === 0 && (
+            <div className="empty-state" role="status" aria-live="polite">
+              {assignedOrders.length === 0 ? (
+                <>
+                  <strong>Sem atividades na carteira atual</strong>
+                  <span>Seu perfil continua ativo, mas não há ordens vinculadas a {session.responsible || session.team || 'este acesso'} nesta carteira. Se você esperava encontrar ordens, peça à supervisão para conferir a carteira.</span>
+                </>
+              ) : query.trim() ? (
+                <>
+                  <strong>Nenhuma ordem encontrada</strong>
+                  <span>Tente outro termo ou limpe a busca para ver as ordens deste acesso.</span>
+                </>
+              ) : tab === 'pendentes' ? (
+                <>
+                  <strong>Nenhuma ordem pendente</strong>
+                  <span>Consulte a aba Registros para ver as ordens já atualizadas.</span>
+                </>
+              ) : (
+                <>
+                  <strong>Nenhum registro ainda</strong>
+                  <span>As ordens disponíveis para execução estão na aba Pendentes.</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <p className="small-note field-footnote">Sua carteira é definida pelo perfil de acesso e pela administração.</p>
       </div>
