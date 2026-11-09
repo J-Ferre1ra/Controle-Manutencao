@@ -2,6 +2,9 @@
 
 Aplicação web responsiva em React e TypeScript. Em produção, a interface e a API serão servidas pelo Cloudflare Workers, e os dados compartilhados ficarão no Cloudflare D1. Os computadores que acessam pelo navegador não precisam de Python, Pandas ou Node.js.
 
+- [Manual do usuário](docs/manual-do-usuario.md): login, importação, acessos, execução, impedimentos, protocolos e troca mensal.
+- [Documentação do projeto](docs/documentacao-do-projeto.md): arquitetura, dados, API, sincronização e manutenção.
+
 ## Sincronização
 
 Cada execução é salva no banco. As telas abertas consultam mudanças a cada 2 minutos e atualizam as ordens sem recarregar a página; ao voltar para uma aba que estava em segundo plano, ela consulta imediatamente. A carteira só é enviada completa quando muda a importação ou a configuração administrativa; as atualizações das equipes trazem apenas ordens alteradas desde a consulta anterior.

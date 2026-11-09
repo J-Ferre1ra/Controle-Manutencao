@@ -546,6 +546,7 @@ h1, h2, h3, p { margin-top: 0; }
   .admin-table td.table-empty { display: block; padding: 18px 12px !important; text-align: center; }
   .admin-table td.table-empty::before { content: none; }
   .admin-table .issue-cell { min-width: 0; max-width: none; }
+  .protocols-table .issue-cell { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .admin-table .protocol-cell { overflow-wrap: anywhere; }
   .table-scroll-hint { display: none; }
   .preview-table { min-width: 0; }

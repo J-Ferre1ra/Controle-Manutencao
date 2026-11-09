@@ -924,7 +924,7 @@ const mappedSpreadsheetHeaders = new Set([
   'NUMERO DA ORDEM', 'ORDEM', 'OS', 'EMPRESA', 'CONTRATADA', 'EQUIPE', 'TURMA', 'SERVICO',
   'DEFEITO', 'TIPO EMR', 'TIPO DE REDE', 'DESCRICAO DO SERVICO', 'DESCRICAO', 'AVANCO', 'PROGRESSO',
   'RESPONSAVEL', 'ENCARREGADO', 'ENDERECO', 'LOCAL',
-]);
+].map(normalizeHeader));
 
 function spreadsheetFields(order: Order): [string, string][] {
   return Object.entries(order.original || {}).filter(([header, value]) =>
