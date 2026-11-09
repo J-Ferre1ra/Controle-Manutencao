@@ -371,11 +371,21 @@ h1, h2, h3, p { margin-top: 0; }
 .security-note { margin: -2px 0 16px; padding: 11px 13px; }
 .portfolio-action-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 5px; }
 .created-credentials { display: flex; align-items: center; justify-content: space-between; gap: 13px; margin: 0 0 15px; padding: 13px; border: 1px solid #bfe2ce; border-radius: 8px; color: #276445; background: #effaf3; }
+.created-credentials[role="alert"] { border-color: #f0d0c7; color: #9a3426; background: #fff6f3; }
 .created-credentials > div { display: grid; gap: 4px; }
 .created-credentials strong { font-size: 15px; }
 .created-credentials span { color: #65816f; font-size: 15px; }
+.created-credentials[role="alert"] span { color: #9a3426; }
 .created-credentials code { color: #185938; font-size: 15px; font-weight: 700; }
 .access-form { margin: 0 0 18px; padding: 18px; border: 1px solid #dbe7ea; border-radius: 8px; background: #fbfdfd; }
+.access-save-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.access-responsible-notice { margin-top: 12px; padding: 11px 13px; border: 1px solid #c8e1eb; border-radius: 7px; color: #355c6b; background: #f0f8fb; font-size: 15px; line-height: 1.5; }
+.password-field { position: relative; }
+.password-field input { padding-right: 48px; }
+.password-visibility { position: absolute; top: 50%; right: 6px; display: grid; width: 36px; height: 36px; padding: 7px; transform: translateY(-50%); place-items: center; border: 0; border-radius: 6px; color: #617985; background: transparent; cursor: pointer; }
+.password-visibility:hover { color: #087b57; background: #eaf6f2; }
+.password-visibility:focus-visible { color: #087b57; background: #eaf6f2; outline: 3px solid rgba(0, 168, 89, .34); outline-offset: 1px; }
+.password-visibility svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .form-heading h3 { margin: 0 0 5px; color: var(--navy); font-size: 16px; }
 .form-heading p { margin: 0 0 15px; color: #758890; font-size: 15px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }

@@ -1,4 +1,5 @@
 import { parseNumericQuantity } from '../src/lib/quantity.js';
+import { hasAccessProfileChanged, validateAccessProfiles } from './access-profile-validation.js';
 
 const SESSION_COOKIE = 'neo_session';
 const SESSION_SECONDS = 60 * 60 * 12;
@@ -359,6 +360,15 @@ async function saveAdminState(request, env) {
     : new Set(['orders', 'profiles', 'imports']);
   if (orders.length > 12000 || profiles.length > 500 || imports.length > 5000) return json({ error: 'O arquivo excede o limite desta versão.' }, 413);
   if (changedParts.has('profiles') && !Array.isArray(body.profiles)) return json({ error: 'A lista completa de perfis é necessária para salvar alterações.' }, 400);
+  if (changedParts.has('orders') && !Array.isArray(body.orders)) return json({ error: 'A carteira completa é necessária para salvar alterações nas ordens.' }, 400);
+  if (changedParts.has('imports') && !Array.isArray(body.imports)) return json({ error: 'A lista de importações é necessária para salvar alterações.' }, 400);
+
+  let existingProfileRows = { results: [] };
+  if (changedParts.has('profiles')) {
+    existingProfileRows = await env.DB.prepare('SELECT id, code, kind, password_salt, password_hash, profile_json, active FROM access_profiles').all();
+    const validationError = validateAccessProfiles(profiles, existingProfileRows.results);
+    if (validationError) return json(validationError, 400);
+  }
 
   let stateChanged = false;
   if (changedParts.has('orders')) {
@@ -374,21 +384,18 @@ async function saveAdminState(request, env) {
   }
 
   if (changedParts.has('profiles')) {
-    const existingRows = await env.DB.prepare('SELECT id, code, kind, password_salt, password_hash, profile_json, active FROM access_profiles').all();
-    const existing = new Map(existingRows.results.map((row) => [row.id, row]));
+    const existing = new Map(existingProfileRows.results.map((row) => [row.id, row]));
     const profileStatements = [];
     for (const profile of profiles) {
-      const id = String(profile.id || crypto.randomUUID());
+      const id = String(profile.id);
       const code = String(profile.code || '').trim();
-      if (!code) continue;
       const previous = existing.get(id);
       const suppliedPassword = String(profile.password || '');
       const kind = String(profile.kind || '');
       const publicData = { ...profile, id, password: '' };
       const profileJson = JSON.stringify(publicData);
       const active = profile.active ? 1 : 0;
-      const changed = !previous || previous.code !== code || previous.kind !== kind ||
-        Number(previous.active) !== active || previous.profile_json !== profileJson || Boolean(suppliedPassword);
+      const changed = hasAccessProfileChanged(profile, previous) || Boolean(suppliedPassword);
       if (!changed) continue;
 
       let salt = previous?.password_salt;
@@ -412,7 +419,7 @@ async function saveAdminState(request, env) {
     }
 
     const storedProfileIds = new Set(profiles.map((profile) => String(profile.id || '')).filter(Boolean));
-    const removedProfileIds = existingRows.results.map((row) => row.id).filter((id) => !storedProfileIds.has(id));
+    const removedProfileIds = existingProfileRows.results.map((row) => row.id).filter((id) => !storedProfileIds.has(id));
     for (let start = 0; start < removedProfileIds.length; start += 80) {
       const ids = removedProfileIds.slice(start, start + 80);
       const placeholders = ids.map(() => '?').join(', ');
