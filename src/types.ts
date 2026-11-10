@@ -1,6 +1,6 @@
 export type ProfileKind = 'inspetor' | 'vencer' | 'nper' | 'neoenergia';
 export type OrderStatus = 'pendente' | 'executada' | 'impedimento';
-export type AdminPage = 'painel' | 'controle' | 'ordens' | 'importacao' | 'protocolos' | 'acessos';
+export type AdminPage = 'painel' | 'controle' | 'apresentacao' | 'ordens' | 'importacao' | 'protocolos' | 'acessos';
 
 export interface AccessProfile {
   id: string;

@@ -693,6 +693,11 @@ async function route(request, env) {
     return readAdminExecutions(env, url);
   }
   if (path === '/api/state' && request.method === 'GET') return json(await readIncrementalState(env, session, url));
+  if (path === '/api/live' && request.method === 'GET') {
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'Conexão em tempo real indisponível.' }, 426);
+    const id = env.LIVE_UPDATES.idFromName('portfolio');
+    return env.LIVE_UPDATES.get(id).fetch('https://live/connect', { headers: { Upgrade: 'websocket' } });
+  }
   if (path === '/api/admin/state' && request.method === 'POST') {
     if (!session.isAdmin) return json({ error: 'Apenas o supervisor pode alterar a carteira.' }, 403);
     try {
@@ -731,13 +736,47 @@ async function route(request, env) {
   return json({ error: 'Rota não encontrada.' }, 404);
 }
 
+// O canal transmite apenas um aviso. Cada aparelho busca seus próprios dados pela API autenticada.
+export class LiveUpdates {
+  constructor(ctx) {
+    this.ctx = ctx;
+  }
+
+  async fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === '/connect') {
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      this.ctx.acceptWebSocket(server);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    if (path === '/publish' && request.method === 'POST') {
+      for (const socket of this.ctx.getWebSockets()) {
+        try { socket.send('changed'); } catch { socket.close(1011, 'Conexão encerrada'); }
+      }
+      return new Response('ok');
+    }
+    return new Response('Não encontrado', { status: 404 });
+  }
+}
+
 export default {
   async fetch(request, env) {
     try {
       if (request.method !== 'GET' && request.method !== 'POST' && request.method !== 'OPTIONS') {
         return new Response('Método não permitido.', { status: 405, headers: { allow: 'GET, POST, OPTIONS' } });
       }
-      return await route(request, env);
+      const response = await route(request, env);
+      const path = new URL(request.url).pathname;
+      if (response.ok && request.method === 'POST' && ['/api/executions', '/api/admin/state', '/api/admin/orders/import', '/api/admin/orders/clear'].includes(path) && env.LIVE_UPDATES) {
+        try {
+          const id = env.LIVE_UPDATES.idFromName('portfolio');
+          await env.LIVE_UPDATES.get(id).fetch('https://live/publish', { method: 'POST' });
+        } catch (error) {
+          console.warn('Falha ao avisar aparelhos conectados:', error);
+        }
+      }
+      return response;
     } catch (error) {
       const rayId = request.headers.get('cf-ray') || crypto.randomUUID();
       const detail = error instanceof Error

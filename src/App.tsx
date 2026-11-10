@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, KeyboardEvent } from 'react';
 import { apiRequest, readSharedState } from './data/api';
 import type { SharedAppState, SyncCursor } from './data/api';
@@ -7,7 +7,10 @@ import type { ParsedWorkbook } from './lib/excel';
 import { parseNumericQuantity } from './lib/quantity.js';
 import type { AccessProfile, AdminPage, ExecutionNotification, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
 
+const Presentation = lazy(() => import('./Presentation').then((module) => ({ default: module.Presentation })));
+
 const SYNC_POLL_INTERVAL_MS = 2 * 60 * 1000;
+const SYNC_FALLBACK_INTERVAL_MS = 15 * 1000;
 
 const kindLabels: Record<ProfileKind, string> = {
   inspetor: 'Neoenergia',
@@ -19,6 +22,7 @@ const kindLabels: Record<ProfileKind, string> = {
 const pageLabels: Record<AdminPage, { title: string; subtitle: string }> = {
   painel: { title: 'Visão geral', subtitle: 'Ordens executadas, pendências e produtividade por responsável.' },
   controle: { title: 'Controle', subtitle: 'Gráficos de execução por situação, equipe, serviço e responsável.' },
+  apresentacao: { title: 'Apresentação', subtitle: 'Quantidade ajustada por frente, avanço e UTD; aderência por ordem.' },
   ordens: { title: 'Ordens', subtitle: 'Consulte e exporte as ordens das carteiras importadas.' },
   importacao: { title: 'Importar planilhas', subtitle: 'Carregue as carteiras do mês e distribua as ordens.' },
   protocolos: { title: 'Protocolos', subtitle: 'Consulte os registros de execução e impedimento.' },
@@ -388,8 +392,10 @@ export default function App() {
     if (!ready || (!adminMode && !session)) return;
     let active = true;
     let refreshing = false;
+    let refreshQueued = false;
     const refresh = async () => {
-      if (!active || refreshing || document.visibilityState !== 'visible') return;
+      if (!active || document.visibilityState !== 'visible') return;
+      if (refreshing) { refreshQueued = true; return; }
       if (adminMode && adminDirty.current) return;
       refreshing = true;
       try {
@@ -426,14 +432,36 @@ export default function App() {
         // A próxima atualização tenta novamente sem interromper a tela atual.
       } finally {
         refreshing = false;
+        if (refreshQueued) {
+          refreshQueued = false;
+          void refresh();
+        }
       }
     };
+    let socket: WebSocket | null = null;
+    let reconnectTimer = 0;
+    const connect = () => {
+      if (!active || !('WebSocket' in window)) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${protocol}//${window.location.host}/api/live`);
+      socket.onopen = () => { void refresh(); };
+      socket.onmessage = () => { void refresh(); };
+      socket.onclose = () => { if (active) reconnectTimer = window.setTimeout(connect, 5000); };
+      socket.onerror = () => { socket?.close(); };
+    };
+    connect();
     const timer = window.setInterval(() => { void refresh(); }, SYNC_POLL_INTERVAL_MS);
+    const fallbackTimer = window.setInterval(() => {
+      if (!socket || socket.readyState !== WebSocket.OPEN) void refresh();
+    }, SYNC_FALLBACK_INTERVAL_MS);
     const onVisibilityChange = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.clearInterval(fallbackTimer);
+      window.clearTimeout(reconnectTimer);
+      socket?.close();
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [ready, adminMode, session]);
@@ -591,7 +619,7 @@ function FieldApp({
   onLogout: () => void;
 }) {
   const [page, setPage] = useState<'lista' | 'registro' | 'protocolo'>('lista');
-  const [tab, setTab] = useState<'pendentes' | 'executadas'>('pendentes');
+  const [tab, setTab] = useState<'pendentes' | 'executadas' | 'apresentacao'>('pendentes');
   const [query, setQuery] = useState('');
   const [orderId, setOrderId] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<Order | null>(null);
@@ -629,6 +657,11 @@ function FieldApp({
       : Boolean(session.team);
     return matchesCompany && matchesTeam && matchesResponsible;
   }), [orders, session]);
+  const pendingOrders = assignedOrders.filter((order) => order.status === 'pendente');
+  const completedOrders = assignedOrders.filter((order) => order.status === 'executada');
+  const pendingAdjusted = pendingOrders.reduce((sum, order) => sum + parseQuantity(order.qtdAjustada), 0);
+  const completedAdjusted = completedOrders.reduce((sum, order) => sum + parseQuantity(order.qtdAjustada), 0);
+  const formatAdjusted = (value: number) => value.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 
   const filteredOrders = useMemo(() => assignedOrders.filter((order) => {
     const isDone = order.status !== 'pendente';
@@ -824,14 +857,16 @@ function FieldApp({
           <button className="text-button logout-button" onClick={onLogout}>Sair</button>
         </div>
         {session.responsible && <div className="responsible-banner"><span>Responsável vinculado</span><strong>{session.responsible}</strong></div>}
-        <h1>Ordens da equipe</h1>
-        <p className="muted">{assignedOrders.filter((order) => order.status === 'pendente').length} pendentes · ordens vinculadas ao seu acesso</p>
+        <h1>{tab === 'apresentacao' ? 'Apresentação da equipe' : 'Ordens da equipe'}</h1>
+        <p className="muted">{formatAdjusted(pendingAdjusted)} de quantidade ajustada pendente · {pendingOrders.length} ordens</p>
 
-        <div className="segmented-control segmented-two list-tabs">
-          <button type="button" className={tab === 'pendentes' ? 'segment active' : 'segment'} onClick={() => setTab('pendentes')}>Pendentes {assignedOrders.filter((order) => order.status === 'pendente').length}</button>
-          <button type="button" className={tab === 'executadas' ? 'segment active' : 'segment'} onClick={() => setTab('executadas')}>Registros {assignedOrders.filter((order) => order.status !== 'pendente').length}</button>
+        <div className="segmented-control segmented-three list-tabs">
+          <button type="button" className={tab === 'pendentes' ? 'segment active' : 'segment'} onClick={() => setTab('pendentes')}>Pendentes {formatAdjusted(pendingAdjusted)}</button>
+          <button type="button" className={tab === 'executadas' ? 'segment active' : 'segment'} onClick={() => setTab('executadas')}>Executado {formatAdjusted(completedAdjusted)}</button>
+          <button type="button" className={tab === 'apresentacao' ? 'segment active' : 'segment'} onClick={() => setTab('apresentacao')}>Apresentação</button>
         </div>
 
+        {tab === 'apresentacao' ? <Suspense fallback={<div className="presentation-empty">Carregando apresentação…</div>}><Presentation orders={assignedOrders} compact /></Suspense> : <>
         <label className="search-field">
           <span aria-hidden="true">⌕</span>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === 'executadas' ? 'Buscar registro, ordem ou quem executou' : 'Buscar ordem, alimentador ou barramento'} />
@@ -899,6 +934,7 @@ function FieldApp({
             </div>
           )}
         </div>
+        </>}
         <p className="small-note field-footnote">Sua carteira é definida pelo perfil de acesso e pela administração.</p>
       </div>
     </main>
@@ -1062,6 +1098,7 @@ function AdminApp({
           {([
             ['painel', 'Painel', '▦'],
             ['controle', 'Controle', '◔'],
+            ['apresentacao', 'Apresentação', '▥'],
             ['ordens', 'Ordens', '≡'],
             ['importacao', 'Importar planilhas', '↑'],
             ['protocolos', 'Protocolos', '▤'],
@@ -1103,6 +1140,7 @@ function AdminApp({
 
         {page === 'painel' && <Dashboard orders={orders} search={search} setSearch={setSearch} setTeamFilter={setTeamFilter} setStatusFilter={setStatusFilter} setServiceFilter={setServiceFilter} setPage={setPage} />}
         {page === 'controle' && <ControlPage orders={orders} />}
+        {page === 'apresentacao' && <main className="admin-content"><Suspense fallback={<div className="presentation-empty">Carregando apresentação…</div>}><Presentation orders={orders} /></Suspense></main>}
         {page === 'ordens' && (
           <OrdersPage
             orders={filteredOrders}

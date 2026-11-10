@@ -17,6 +17,7 @@
     "@fontsource/roboto": "^5.2.6",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "recharts": "^3.10.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

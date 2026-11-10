@@ -11,19 +11,22 @@ O sistema não edita a planilha original em tempo real. O arquivo é importado p
 ```mermaid
 flowchart LR
     A[Navegador: React e TypeScript] -->|HTTPS /api| B[Cloudflare Worker]
+    A <-->|WebSocket /api/live| B
     B --> C[(Cloudflare D1)]
+    B --> L[Durable Object: avisos de mudança]
     B --> D[Arquivos estáticos da interface]
     S[Supervisor] --> A
     E[Equipe] --> A
 ```
 
-- `src/App.tsx` implementa as telas, formulários, estados e atualização periódica.
+- `src/App.tsx` implementa as telas, formulários, estados e atualização dos dados.
+- `src/Presentation.tsx` calcula os indicadores da carteira atual e desenha os gráficos com Recharts.
 - `src/styles.css` define o layout responsivo.
 - `src/lib/excel.ts` lê planilhas `.xlsx`, mapeia colunas e gera arquivos de exportação.
 - `src/data/api.ts` centraliza requisições HTTP e cursores de sincronização.
 - `worker/index.js` atende a API, valida sessão e autorização, grava ordens e protocolos no D1.
 - `worker/access-profile-validation.js` concentra validações dos perfis no servidor.
-- `drizzle/*.sql` contém as migrações do banco. `wrangler.jsonc` configura Worker, arquivos da interface e a ligação `DB`.
+- `drizzle/*.sql` contém as migrações do banco. `wrangler.jsonc` configura Worker, arquivos da interface, D1 e o objeto de avisos em tempo real.
 
 ## Dados e regras de negócio
 
@@ -42,6 +45,8 @@ O perfil usa **tipo de empresa + RESPONSÁVEL** para limitar ordens. O servidor 
 
 Uma execução muda a ordem para `executada` e cria um registro de auditoria. Um impedimento cria um registro de auditoria, mas deixa a ordem `pendente` para uma nova tentativa. A confirmação e o protocolo são retornados pelo servidor após a gravação; atualizar a interface local sem essa resposta não comprova salvamento. Tentativas concorrentes sobre uma ordem concluída recebem conflito.
 
+A apresentação calcula os indicadores a partir das ordens da carteira corrente, já filtradas pelo perfil no servidor. Previsto, concluído e pendente somam `QTD. AJUSTADA`; uma ordem executada contribui com sua quantidade ajustada para o concluído. A quantidade efetivamente declarada no registro continua guardada separadamente. A aderência final conta ordens, como solicitado. Os cálculos não reutilizam valores em cache ou fórmulas antigas da aba `APRESENTAÇÃO`, que podem se referir a outro mês.
+
 ## Importação e exportação
 
 Há dois fluxos de importação:
@@ -57,6 +62,7 @@ A prévia identifica a aba, colunas e linhas elegíveis. Cabeçalhos duplicados 
 | --- | --- |
 | `POST /api/login`, `GET /api/session`, `POST /api/logout` | Autenticação e sessão. |
 | `GET /api/state` | Carteira completa ou mudanças desde o cursor informado. |
+| `GET /api/live` | Canal autenticado de avisos por WebSocket; os dados continuam sendo obtidos por `/api/state`. |
 | `POST /api/admin/state` | Alterações administrativas, como importação inicial e perfis. |
 | `POST /api/admin/orders/import` | Inclusão de ordens complementares. |
 | `POST /api/admin/orders/clear` | Exclusão da carteira ativa após conferência de revisão. |
@@ -68,7 +74,7 @@ O servidor recusa alterações administrativas feitas por equipes, registros for
 
 ## Sincronização e consumo do D1
 
-Uma execução grava somente a ordem afetada, a revisão e o registro de auditoria, além da foto se houver. As telas abertas consultam alterações a cada 2 minutos e ao voltar do segundo plano. Com um cursor válido, o servidor devolve somente mudanças e notificações desde a última revisão. Consultas frequentes geram leituras e requisições; gravações e limites diários ou mensais do D1 são métricas diferentes. O plano pago amplia as franquias, mas não corrige falhas de código, validação ou configuração. Acompanhe o uso real no painel Cloudflare.
+Uma execução grava somente a ordem afetada, a revisão e o registro de auditoria, além da foto se houver. Após uma alteração confirmada, o Worker envia apenas um aviso às conexões WebSocket do Durable Object. Cada cliente consulta `/api/state` com seu próprio cursor e sua sessão para receber somente os dados autorizados. As telas também verificam alterações a cada 2 minutos e ao voltar do segundo plano; quando o WebSocket está desconectado, consultam a cada 15 segundos até reconectar. Eventos recebidos durante uma consulta geram outra consulta após ela terminar. Consultas geram leituras e requisições; gravações e limites diários ou mensais do D1 são métricas diferentes. O plano pago amplia as franquias, mas não corrige falhas de código, validação ou configuração. Acompanhe o uso real no painel Cloudflare.
 
 O modo atual exige conexão. Não há fila local confiável para trabalho offline nem envio automático posterior. A confirmação visual de um protocolo deve ocorrer antes de considerar a ordem registrada.
 

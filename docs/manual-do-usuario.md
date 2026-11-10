@@ -44,7 +44,9 @@ Em **Acessos**, busque por nome, código ou responsável e use os filtros de emp
 
 ## Equipe: consultar e registrar uma ordem
 
-Após entrar, **Pendentes** mostra as ordens disponíveis para o responsável do perfil. Use a busca para localizar número, alimentador ou barramento. **Ver detalhes** mostra os dados adicionais da planilha. **Registros** reúne as ordens executadas por esse acesso.
+Após entrar, **Pendentes** mostra as ordens disponíveis para o responsável do perfil. O número nessa aba é a soma da **quantidade ajustada** dessas ordens. Use a busca para localizar número, alimentador ou barramento. **Ver detalhes** mostra os dados adicionais da planilha. **Executado** reúne as ordens concluídas por esse acesso; o número nessa aba também usa a quantidade ajustada.
+
+**Apresentação** mostra gráficos da carteira vinculada ao perfil: quantidade ajustada por frente de serviço, por avanço e por UTD. A seção **Aderência da carteira** usa número de ordens, indicado separadamente na tela.
 
 ### Serviço executado
 
@@ -52,7 +54,7 @@ Após entrar, **Pendentes** mostra as ordens disponíveis para o responsável do
 2. Escolha **Executado**, informe a quantidade realmente feita e, quando ela for menor que a prevista, explique a diferença em **Observação**.
 3. Clique em **Salvar e gerar protocolo**. Aguarde **Registro confirmado** e anote o protocolo.
 
-Depois da confirmação, a ordem sai de **Pendentes** e aparece em **Registros**. Outra equipe não consegue registrar uma execução para uma ordem já concluída; se alguém a concluir primeiro, o servidor informa o conflito ao tentar salvar.
+Depois da confirmação, a ordem sai de **Pendentes** e aparece em **Executado**. Outra equipe não consegue registrar uma execução para uma ordem já concluída; se alguém a concluir primeiro, o servidor informa o conflito ao tentar salvar.
 
 ### Serviço impedido
 
@@ -66,11 +68,12 @@ O impedimento fica no histórico e pode ser consultado pelo supervisor, com moti
 ## Supervisor: acompanhar e conferir
 
 - **Painel** resume ordens importadas, executadas, pendentes e impedimentos. A seção por responsável mostra o avanço de cada grupo.
+- **Apresentação** acompanha a quantidade ajustada da carteira atual por frente, avanço e UTD. Escolha uma frente para detalhar suas UTDs. Apenas a seção **Aderência da carteira** conta ordens.
 - **Controle** e **Ordens** oferecem busca e filtros. A opção **Outros dados da planilha** abre os campos adicionais sem repetir as colunas principais.
 - **Protocolos** mostra cada tentativa separadamente, com protocolo, ordem, equipe, responsável, operador, resultado, problema, evidência e data. Use **Abrir foto** para examinar um impedimento e **Atualizar** para consultar registros recentes.
 - **Exportar carteira** ou **Exportar seleção** gera uma planilha com os dados da carteira e campos de execução, quantidade, situação, impedimento e auditoria. A exportação mantém dados e cabeçalhos; não reproduz necessariamente a aparência, fórmulas ou células mescladas do arquivo original.
 
-As telas abertas verificam alterações a cada cerca de **2 minutos** e quando a aba volta ao primeiro plano. Para conferir um registro imediatamente, atualize a página ou use o botão **Atualizar** quando disponível. Um protocolo só confirma o registro quando a tela mostrar **Registro confirmado**.
+As telas abertas recebem um aviso após uma alteração salva e consultam os dados atualizados automaticamente. Também verificam alterações a cada cerca de **2 minutos** e quando a aba volta ao primeiro plano. Se a conexão ao vivo cair, fazem verificações mais frequentes até reconectar. Um protocolo só confirma o registro quando a tela mostrar **Registro confirmado**.
 
 ## Se algo não funcionar
 

@@ -17,5 +17,9 @@
       "database_id": "50540b3c-abbd-4c3c-8397-bbf991c0f629",
       "migrations_dir": "drizzle"
     }
-  ]
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "LIVE_UPDATES", "class_name": "LiveUpdates" }]
+  },
+  "migrations": [{ "tag": "live-updates-v1", "new_sqlite_classes": ["LiveUpdates"] }]
 }
