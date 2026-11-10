@@ -1763,8 +1763,14 @@ function PasswordEye({ visible }: { visible: boolean }) {
   );
 }
 
+function accessInitials(name: string): string {
+  return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toLocaleUpperCase('pt-BR') || '').join('') || 'AC';
+}
+
 function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRetrySave, created, setCreated }: { orders: Order[]; profiles: AccessProfile[]; setProfiles: (profiles: AccessProfile[]) => void; saveStatus: AdminSaveStatus; saveError: string; onRetrySave: () => void; created: AccessProfile | null; setCreated: (profile: AccessProfile | null) => void }) {
   type NewProfileKind = 'neoenergia' | 'vencer';
+  type AccessKindFilter = NewProfileKind | 'all';
+  type AccessStatusFilter = 'all' | 'active' | 'inactive';
   const [showForm, setShowForm] = useState(false);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [kind, setKind] = useState<NewProfileKind>('neoenergia');
@@ -1776,6 +1782,31 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
+  const [accessSearch, setAccessSearch] = useState('');
+  const [accessKindFilter, setAccessKindFilter] = useState<AccessKindFilter>('all');
+  const [accessResponsibleFilter, setAccessResponsibleFilter] = useState('');
+  const [accessStatusFilter, setAccessStatusFilter] = useState<AccessStatusFilter>('all');
+  const formRef = useRef<HTMLFormElement>(null);
+  const accessResponsibleOptions = [...new Map(profiles
+    .map((profile) => (profile.responsible || profile.team || '').trim())
+    .filter(Boolean)
+    .map((value) => [normalize(value), value])).values()]
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const activeProfileCount = profiles.filter((profile) => profile.active).length;
+  const responsibleCount = new Set(profiles
+    .map((profile) => normalize(profile.responsible || profile.team))
+    .filter(Boolean)).size;
+  const editingProfile = profiles.find((profile) => profile.id === editingProfileId);
+  const filteredProfiles = profiles.filter((profile) => {
+    const search = normalize(accessSearch);
+    const name = profile.operatorName || profile.label;
+    const assignedResponsible = profile.responsible || profile.team || '';
+    return (!search || [name, profile.code, assignedResponsible, profile.label].some((value) => normalize(value).includes(search)))
+      && (accessKindFilter === 'all' || canonicalProfileKind(profile.kind) === accessKindFilter)
+      && (!accessResponsibleFilter || normalize(assignedResponsible) === normalize(accessResponsibleFilter))
+      && (accessStatusFilter === 'all' || profile.active === (accessStatusFilter === 'active'));
+  }).sort((a, b) => (Number(b.active) - Number(a.active))
+    || (a.operatorName || a.label).localeCompare(b.operatorName || b.label, 'pt-BR'));
   const responsibleChoices = [...new Set([
     ...orders.filter((order) => canonicalCompany(order.empresa) === kind).map((order) => order.responsavel),
     ...profiles.filter((profile) => canonicalProfileKind(profile.kind) === kind).map((profile) => profile.responsible || ''),
@@ -1783,6 +1814,17 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
   const responsibleHasCurrentOrders = orders.some((order) =>
     canonicalCompany(order.empresa) === kind && normalize(order.responsavel) === normalize(responsible),
   );
+
+  function scrollToForm() {
+    window.setTimeout(() => { formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 0);
+  }
+
+  function clearAccessFilters() {
+    setAccessSearch('');
+    setAccessKindFilter('all');
+    setAccessResponsibleFilter('');
+    setAccessStatusFilter('all');
+  }
 
   function resetForm() {
     setShowForm(false);
@@ -1802,6 +1844,7 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
     resetForm();
     setCreated(null);
     setShowForm(true);
+    scrollToForm();
   }
 
   function startEdit(profile: AccessProfile) {
@@ -1817,6 +1860,7 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
     setError('');
     setCreated(null);
     setShowForm(true);
+    scrollToForm();
   }
 
   function correctRejectedProfile() {
@@ -1833,6 +1877,7 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
     setError(saveError || 'Revise os dados deste acesso e salve novamente.');
     setCreated(null);
     setShowForm(true);
+    scrollToForm();
   }
 
   function saveAccess(event: FormEvent<HTMLFormElement>) {
@@ -1932,28 +1977,67 @@ function AccessPage({ orders, profiles, setProfiles, saveStatus, saveError, onRe
   return (
     <main className="admin-content">
       <section className="panel access-panel">
-        <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Cada acesso vê as ordens do responsável selecionado.</p></div><button className="button button-primary" onClick={startCreate}>+ Criar perfil</button></div>
+        <div className="panel-heading"><div><h2>Perfis de acesso</h2><p className="muted">Consulte e gerencie quem pode usar a carteira.</p></div><button className="button button-primary" onClick={startCreate}>+ Criar acesso</button></div>
+        <div className="access-overview" aria-label="Resumo dos acessos">
+          <div><strong>{activeProfileCount}</strong><span>Acessos ativos</span></div>
+          <div><strong>{responsibleCount}</strong><span>Responsáveis</span></div>
+          <div><strong>{profiles.length - activeProfileCount}</strong><span>Desativados</span></div>
+        </div>
         {saveStatus === 'error' && !created && !error && <div className="inline-error access-save-error" role="alert"><span>{saveError || 'O servidor não confirmou esta alteração.'}</span><button className="text-button" onClick={onRetrySave}>Tentar novamente</button></div>}
         {created && <div className="created-credentials" role={saveStatus === 'error' ? 'alert' : 'status'} aria-live={saveStatus === 'error' ? 'assertive' : 'polite'}><div><strong>{saveStatus === 'error' ? 'Não foi possível salvar o perfil' : saveStatus === 'saved' ? 'Alterações salvas' : 'Salvando alterações…'}</strong><span>{kindLabels[created.kind]} · {created.responsible || created.team || 'Sem responsável'} · {created.operatorName}</span><span>{saveStatus === 'error' ? (saveError || 'O servidor não confirmou. Tente novamente.') : created.password ? saveStatus === 'saved' ? 'Guarde o código e a nova senha; ela não poderá ser consultada depois.' : 'Aguarde a confirmação antes de usar as novas credenciais.' : saveStatus === 'saved' ? 'O perfil foi atualizado. A senha existente foi mantida.' : 'Aguarde a confirmação do servidor.'}</span></div>{saveStatus === 'saved' && created.password && <code>{created.code} / {created.password}</code>}{saveStatus === 'error' && <><button className="text-button" onClick={correctRejectedProfile}>Revisar perfil</button><button className="text-button" onClick={onRetrySave}>Tentar novamente</button></>}{saveStatus === 'saved' && <button className="text-button" onClick={() => setCreated(null)}>Fechar</button>}</div>}
         {showForm && (
-          <form className="access-form" onSubmit={saveAccess}>
-            <div className="form-heading"><h3>{editingProfileId ? 'Editar acesso' : 'Novo acesso'}</h3><p>Escolha o responsável e defina as credenciais.</p></div>
+          <form ref={formRef} className="access-form" onSubmit={saveAccess}>
+            <div className="form-heading"><h3>{editingProfileId ? 'Editar acesso' : 'Novo acesso'}</h3><p>Informe o responsável da carteira e os dados da pessoa.</p></div>
             <div className="form-grid">
-              <label className="field-group"><span>Tipo de acesso</span><select value={kind} onChange={(event) => { setKind(event.target.value as NewProfileKind); setResponsible(''); }}><option value="neoenergia">Neoenergia</option><option value="vencer">Vencer</option></select></label>
+              <label className="field-group"><span>Empresa</span><select value={kind} onChange={(event) => { setKind(event.target.value as NewProfileKind); setResponsible(''); }}><option value="neoenergia">Neoenergia</option><option value="vencer">Vencer</option></select></label>
               <label className="field-group"><span>Responsável</span><input list="access-responsible-options" value={responsible} onChange={(event) => setResponsible(event.target.value)} placeholder="Como aparece na planilha" maxLength={180} required /><datalist id="access-responsible-options">{responsibleChoices.map((option) => <option key={option} value={option} />)}</datalist></label>
-              <label className="field-group"><span>Nome registrado nos protocolos</span><input value={operatorName} onChange={(event) => setOperatorName(event.target.value)} placeholder="Ex.: João Silva" autoComplete="name" maxLength={120} required /></label>
-              <label className="field-group"><span>Código de acesso</span><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Ex.: NEO@01" autoComplete="off" minLength={4} maxLength={64} required /></label>
+              <label className="field-group"><span>Nome da pessoa (aparece nos protocolos)</span><input value={operatorName} onChange={(event) => setOperatorName(event.target.value)} placeholder="Ex.: João Silva" autoComplete="name" maxLength={120} required /></label>
+              <label className="field-group"><span>Código de acesso</span><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Ex.: U348041" autoComplete="off" minLength={4} maxLength={64} required /></label>
               <label className="field-group"><span>{editingProfileId ? 'Nova senha (opcional)' : 'Senha'}</span><div className="password-field"><input value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? 'text' : 'password'} placeholder={editingProfileId ? 'Vazio mantém a senha atual' : 'Mínimo de 4 caracteres'} autoComplete="new-password" minLength={editingProfileId ? undefined : 4} maxLength={128} required={!editingProfileId} /><button type="button" className="password-visibility" aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'} aria-pressed={showPassword} onClick={() => setShowPassword((visible) => !visible)}><PasswordEye visible={showPassword} /></button></div></label>
               <label className="field-group"><span>{editingProfileId ? 'Confirme a nova senha' : 'Confirme a senha'}</span><div className="password-field"><input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type={showConfirmPassword ? 'text' : 'password'} placeholder="Digite a senha novamente" autoComplete="new-password" minLength={editingProfileId ? undefined : 4} maxLength={128} required={!editingProfileId} /><button type="button" className="password-visibility" aria-label={showConfirmPassword ? 'Ocultar confirmação da senha' : 'Mostrar confirmação da senha'} aria-pressed={showConfirmPassword} onClick={() => setShowConfirmPassword((visible) => !visible)}><PasswordEye visible={showConfirmPassword} /></button></div></label>
             </div>
             {responsible.trim() && !responsibleHasCurrentOrders && <div className="access-responsible-notice" role="status">Nenhuma ordem desta carteira está vinculada a “{responsible.trim()}”. O perfil será salvo, mas mostrará “Sem atividades na carteira atual” até uma carteira incluir esse responsável. Confira a grafia.</div>}
             {error && <div className="inline-error" role="alert">{error}</div>}
             <div className="form-actions"><button type="button" className="button button-ghost" onClick={resetForm}>Cancelar</button><button className="button button-primary" type="submit">{editingProfileId ? 'Salvar alterações' : 'Criar acesso'}</button></div>
+            {editingProfile && (
+              <div className="access-management">
+                <strong>Outras ações deste acesso</strong>
+                <div>
+                  <button type="button" className="text-button" onClick={() => {
+                    toggle(editingProfile);
+                    resetForm();
+                  }}>{editingProfile.active ? 'Desativar acesso' : 'Ativar acesso'}</button>
+                  <button type="button" className="text-button access-delete-button" onClick={() => remove(editingProfile)}>Excluir acesso</button>
+                </div>
+              </div>
+            )}
           </form>
         )}
-        <div className="table-scroll"><table className="admin-table access-table"><thead><tr><th>Perfil</th><th>Tipo</th><th>Responsável</th><th>Nome auditado</th><th>Código</th><th>Estado</th><th>Ação</th></tr></thead>
-          <tbody>{profiles.map((profile) => <tr key={profile.id}><td data-label="Perfil"><strong>{profile.label}</strong></td><td data-label="Tipo">{kindLabels[profile.kind]}</td><td data-label="Responsável">{profile.responsible || profile.team || '—'}</td><td data-label="Nome auditado">{profile.operatorName || profile.responsible || profile.label}</td><td data-label="Código"><code>{profile.code}</code></td><td data-label="Estado"><span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span></td><td data-label="Ação"><div className="access-actions"><button className="table-action" onClick={() => startEdit(profile)}>Editar</button><button className="table-action" onClick={() => toggle(profile)}>{profile.active ? 'Desativar' : 'Ativar'}</button><button className="table-action table-action-danger" onClick={() => remove(profile)}>Excluir</button></div></td></tr>)}</tbody>
-        </table></div>
+        <section className="access-directory" aria-label="Lista de perfis">
+          <div className="access-directory-toolbar">
+            <label className="access-search-field"><span>Buscar acesso</span><input type="search" value={accessSearch} onChange={(event) => setAccessSearch(event.target.value)} placeholder="Nome, matrícula ou responsável" /></label>
+            <div className="access-kind-filter" role="group" aria-label="Filtrar por empresa">
+              <button type="button" className={accessKindFilter === 'all' ? 'selected' : ''} aria-pressed={accessKindFilter === 'all'} onClick={() => setAccessKindFilter('all')}>Todos</button>
+              <button type="button" className={accessKindFilter === 'neoenergia' ? 'selected' : ''} aria-pressed={accessKindFilter === 'neoenergia'} onClick={() => setAccessKindFilter('neoenergia')}>Neoenergia</button>
+              <button type="button" className={accessKindFilter === 'vencer' ? 'selected' : ''} aria-pressed={accessKindFilter === 'vencer'} onClick={() => setAccessKindFilter('vencer')}>Vencer</button>
+            </div>
+            <label className="access-filter-field"><span>Responsável</span><select value={accessResponsibleFilter} onChange={(event) => setAccessResponsibleFilter(event.target.value)}><option value="">Todos os responsáveis</option>{accessResponsibleOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+            <label className="access-filter-field access-status-filter"><span>Estado</span><select value={accessStatusFilter} onChange={(event) => setAccessStatusFilter(event.target.value as AccessStatusFilter)}><option value="all">Todos os estados</option><option value="active">Ativos</option><option value="inactive">Desativados</option></select></label>
+          </div>
+          <div className="access-results"><span>{filteredProfiles.length.toLocaleString('pt-BR')} {filteredProfiles.length === 1 ? 'perfil encontrado' : 'perfis encontrados'}</span>{(accessSearch || accessKindFilter !== 'all' || accessResponsibleFilter || accessStatusFilter !== 'all') && <button type="button" className="text-button" onClick={clearAccessFilters}>Limpar filtros</button>}</div>
+          <div className="access-list-heading" aria-hidden="true"><span>Pessoa</span><span>Responsável</span><span>Estado</span><span>Ação</span></div>
+          {filteredProfiles.length > 0 ? (
+            <ul className="access-list">{filteredProfiles.map((profile) => {
+              const name = profile.operatorName || profile.label;
+              return <li className="access-list-item" key={profile.id}>
+                <div className="access-person"><span className="access-avatar" aria-hidden="true">{accessInitials(name)}</span><div><strong>{name}</strong><small>{kindLabels[profile.kind]} · Código {profile.code}</small></div></div>
+                <div className="access-responsible"><span>Responsável</span><strong>{profile.responsible || profile.team || 'Sem responsável'}</strong></div>
+                <span className={profile.active ? 'profile-active' : 'profile-inactive'}>{profile.active ? 'Ativo' : 'Desativado'}</span>
+                <button type="button" className="access-edit-button" aria-label={`Editar acesso de ${name}`} onClick={() => startEdit(profile)}>Editar<span> acesso</span></button>
+              </li>;
+            })}</ul>
+          ) : <div className="access-empty"><strong>{profiles.length === 0 ? 'Nenhum acesso cadastrado' : 'Nenhum perfil encontrado'}</strong><span>{profiles.length === 0 ? 'Crie o primeiro acesso para liberar a carteira a uma equipe.' : 'Tente outra busca ou limpe os filtros.'}</span>{profiles.length > 0 && <button type="button" className="text-button" onClick={clearAccessFilters}>Limpar filtros</button>}</div>}
+        </section>
         <p className="local-warning">Alterar um perfil ou excluí-lo encerra as sessões abertas desse acesso.</p>
       </section>
     </main>

@@ -321,10 +321,6 @@ h1, h2, h3, p { margin-top: 0; }
 .notification-eyebrow { color: #218457; font-size: 15px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .notification-dismiss { position: absolute; top: 7px; right: 8px; width: 25px; height: 25px; border: 0; border-radius: 5px; color: #58727d; background: transparent; cursor: pointer; font-size: 19px; line-height: 1; }
 .notification-dismiss:hover { background: #edf5f2; }
-.table-action { padding: 4px 8px; border: 0; color: var(--blue); background: transparent; font-size: 15px; font-weight: 700; }
-.table-action:hover { text-decoration: underline; }
-.table-action-danger { color: #b63838; }
-.access-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
 .issue-cell { min-width: 210px; max-width: 360px; white-space: normal !important; line-height: 1.45; }
 .issue-cell strong, .issue-cell span { display: block; }
 .issue-cell span { margin-top: 3px; color: var(--muted); }
@@ -390,9 +386,51 @@ h1, h2, h3, p { margin-top: 0; }
 .form-heading p { margin: 0 0 15px; color: #758890; font-size: 15px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; }
-.access-table { min-width: 760px; }
-.access-table td strong { color: #294b58; }
-.access-table code { color: #486773; font-size: 15px; }
+.access-panel > .panel-heading h2 { font-size: 20px; }
+.access-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; max-width: 720px; margin-bottom: 18px; }
+.access-overview > div { display: grid; gap: 5px; padding: 13px 15px; border: 1px solid #dce6ea; border-radius: 8px; background: #fbfdfd; }
+.access-overview strong { color: var(--navy); font-size: 23px; line-height: 1; }
+.access-overview span { color: #6d838d; font-size: 15px; }
+.access-management { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 17px; padding-top: 13px; border-top: 1px solid #e4ebed; }
+.access-management > strong { color: #647985; font-size: 15px; font-weight: 500; }
+.access-management > div { display: flex; flex-wrap: wrap; gap: 17px; }
+.access-delete-button { color: #a93b31; }
+.access-delete-button:hover { color: #8d2a23; }
+.access-directory { min-width: 0; overflow: hidden; border: 1px solid #dce6ea; border-radius: 9px; background: #fff; }
+.access-directory-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 15px; }
+.access-search-field, .access-filter-field { display: grid; gap: 5px; min-width: 0; }
+.access-search-field { flex: 1 1 220px; }
+.access-filter-field { flex: 1 1 165px; max-width: 265px; }
+.access-status-filter { flex-basis: 145px; max-width: 195px; }
+.access-search-field > span, .access-filter-field > span { color: #66808c; font-size: 15px; font-weight: 700; }
+.access-search-field input, .access-filter-field select { width: 100%; min-width: 0; min-height: 42px; padding: 8px 11px; border: 1px solid #ccdce2; border-radius: 7px; color: var(--ink); background: #fff; font-size: 15px; }
+.access-search-field input::placeholder { color: #8499a2; }
+.access-kind-filter { display: inline-flex; min-height: 42px; padding: 3px; border: 1px solid #d6e3e7; border-radius: 8px; background: #f4f8f9; }
+.access-kind-filter button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 5px; color: #5c7580; background: transparent; font-size: 15px; font-weight: 700; white-space: nowrap; }
+.access-kind-filter button.selected { color: var(--navy); background: #fff; box-shadow: 0 1px 4px rgba(0, 42, 60, .1); }
+.access-results { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 16px 12px; color: #71858e; font-size: 15px; }
+.access-results .text-button { font-size: 15px; }
+.access-list-heading, .access-list-item { display: grid; grid-template-columns: minmax(185px, 1.45fr) minmax(165px, 1.15fr) 108px 74px; align-items: center; gap: 14px; }
+.access-list-heading { min-height: 39px; padding: 9px 16px; border-top: 1px solid #e6edef; color: #6b838e; background: #f7fafb; font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: .035em; }
+.access-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.access-list-item { min-width: 0; min-height: 74px; padding: 12px 16px; border-top: 1px solid #edf1f2; }
+.access-list-item:first-child { border-top: 0; }
+.access-list-item:hover { background: #fbfdfd; }
+.access-list-item > .profile-active, .access-list-item > .profile-inactive { justify-self: start; }
+.access-person { display: flex; align-items: center; min-width: 0; gap: 11px; }
+.access-person > div { display: grid; min-width: 0; gap: 4px; }
+.access-person strong { overflow: hidden; color: #274a58; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.access-person small { overflow: hidden; color: #788d97; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.access-avatar { display: grid; flex: none; width: 38px; height: 38px; place-items: center; border-radius: 50%; color: #0d6673; background: #e2f0ef; font-size: 13px; font-weight: 700; }
+.access-responsible { min-width: 0; }
+.access-responsible > span { display: none; }
+.access-responsible strong { display: block; overflow: hidden; color: #4c6671; font-size: 15px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.access-edit-button { min-height: 38px; padding: 0 5px; border: 0; color: var(--blue); background: transparent; font-size: 15px; font-weight: 700; }
+.access-edit-button:hover { color: var(--navy); text-decoration: underline; }
+.access-edit-button span { display: none; }
+.access-empty { display: grid; justify-items: center; gap: 7px; padding: 28px 16px; border-top: 1px solid #e7edef; text-align: center; }
+.access-empty strong { color: var(--navy); font-size: 16px; }
+.access-empty span { color: #71858e; font-size: 15px; line-height: 1.4; }
 .profile-active, .profile-inactive { display: inline-flex; padding: 4px 7px; border-radius: 20px; font-size: 15px; font-weight: 700; }
 .profile-active { color: #1f7849; background: #eaf7ef; }
 .profile-inactive { color: #75858b; background: #edf1f2; }
@@ -402,6 +440,10 @@ h1, h2, h3, p { margin-top: 0; }
   .admin-sidebar { width: 210px; }
   .admin-main { margin-left: 210px; }
   .admin-content { padding-right: 24px; padding-left: 24px; }
+  .access-directory-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .access-filter-field, .access-status-filter { max-width: none; }
+  .access-kind-filter { width: fit-content; }
+  .access-list-heading, .access-list-item { grid-template-columns: minmax(145px, 1.4fr) minmax(125px, 1.1fr) 100px 60px; gap: 10px; }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .control-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .control-chart-grid { grid-template-columns: 1fr; }
@@ -528,7 +570,6 @@ h1, h2, h3, p { margin-top: 0; }
 
   .table-scroll { overflow: visible; border: 0; }
   .admin-table { display: block; width: 100%; white-space: normal; }
-  .access-table { min-width: 0; }
   .admin-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
   .admin-table tbody { display: grid; gap: 10px; }
   .admin-table tbody tr { display: block; overflow: hidden; border: 1px solid #dce6ea; border-radius: 9px; background: #fff; box-shadow: 0 2px 7px rgba(0, 47, 70, .035); }
@@ -563,6 +604,17 @@ h1, h2, h3, p { margin-top: 0; }
   .import-actions > span { line-height: 1.5; }
   .created-credentials { min-width: 0; }
   .created-credentials > div { min-width: 0; overflow-wrap: anywhere; }
+  .access-overview { max-width: none; }
+  .access-list-heading { display: none; }
+  .access-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 10px; border-top: 1px solid #e7edef; }
+  .access-list-item, .access-list-item:first-child { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'person status' 'responsible responsible' 'edit edit'; gap: 10px 8px; min-width: 0; padding: 12px 12px 0; border: 1px solid #dce6ea; border-radius: 8px; background: #fff; box-shadow: 0 2px 7px rgba(0, 47, 70, .035); }
+  .access-person { grid-area: person; }
+  .access-responsible { grid-area: responsible; display: grid; gap: 4px; }
+  .access-responsible > span { display: block; color: #71858e; font-size: 15px; }
+  .access-responsible strong { overflow: visible; font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
+  .access-list-item > .profile-active, .access-list-item > .profile-inactive { grid-area: status; align-self: start; white-space: nowrap; }
+  .access-edit-button { grid-area: edit; width: calc(100% + 24px); min-height: 44px; margin: 0 -12px; padding: 0 12px; border-top: 1px solid #e7edef; border-radius: 0 0 8px 8px; background: #f8fbfb; text-align: left; }
+  .access-edit-button span { display: inline; }
 }
 
 @media (min-width: 561px) and (max-width: 900px) {
@@ -611,6 +663,21 @@ h1, h2, h3, p { margin-top: 0; }
   .form-actions { flex-wrap: wrap; }
   .form-actions .button { min-height: 44px; }
   .access-form { padding: 13px; }
+  .access-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .access-overview > div { min-width: 0; gap: 5px; padding: 10px 8px; }
+  .access-overview > div:last-child { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; }
+  .access-overview strong { font-size: 21px; }
+  .access-overview span { font-size: 15px; line-height: 1.25; }
+  .access-directory-toolbar { grid-template-columns: minmax(0, 1fr); gap: 9px; padding: 12px; }
+  .access-search-field, .access-filter-field, .access-status-filter { flex: 1 1 100%; max-width: none; }
+  .access-kind-filter { width: 100%; }
+  .access-kind-filter button { flex: 1; min-width: 0; padding: 0 5px; font-size: 15px; }
+  .access-results { align-items: flex-start; padding: 0 12px 11px; }
+  .access-list { grid-template-columns: minmax(0, 1fr); gap: 9px; padding: 9px; }
+  .access-person strong { white-space: normal; overflow-wrap: anywhere; }
+  .access-person small { white-space: normal; overflow-wrap: anywhere; }
+  .access-management { align-items: flex-start; flex-direction: column; }
+  .access-management > div { gap: 12px 18px; }
   .file-selected { min-width: 0; }
   .file-selected > div, .file-selected strong { max-width: 100%; overflow-wrap: anywhere; }
   .import-history-item > div { flex-wrap: wrap; }

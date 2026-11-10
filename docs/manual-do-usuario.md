@@ -33,14 +33,14 @@ A exclusão remove a carteira de ordens ativa. Os perfis de acesso continuam cad
 
 ## Supervisor: criar e manter acessos
 
-1. Abra **Acessos > Criar perfil**.
+1. Abra **Acessos > Criar acesso**.
 2. Escolha **Neoenergia** ou **Vencer** e informe o **Responsável** como aparece na planilha.
-3. Preencha o **Nome registrado nos protocolos**, o **Código de acesso**, a senha e a confirmação. O olho mostra ou oculta cada campo de senha.
+3. Preencha o **Nome da pessoa (aparece nos protocolos)**, o **Código de acesso**, a senha e a confirmação. O olho mostra ou oculta cada campo de senha.
 4. Clique em **Criar acesso** e aguarde **Alterações salvas**. Guarde o código e a senha exibidos: a senha não poderá ser consultada depois.
 
 O cadastro pode ser feito mesmo que esse responsável não tenha ordens no mês. A tela avisa essa condição e, ao entrar, o usuário verá **Sem atividades na carteira atual**. Confira a grafia do responsável para evitar um perfil sem ordens por engano. O código precisa ser exclusivo; o formulário informa campos incompletos, código repetido ou senhas diferentes. Se o servidor rejeitar a alteração, a tela mostra o erro e oferece **Revisar perfil** e **Tentar novamente**. Um perfil ainda sem confirmação do servidor não deve ser distribuído à equipe.
 
-Em **Acessos**, use **Editar** para corrigir tipo, responsável, nome, código ou trocar a senha. Deixe os dois campos de senha vazios para mantê-la. **Desativar** suspende o acesso; **Ativar** o restabelece. **Excluir** remove o perfil permanentemente após confirmação. Editar ou excluir um perfil encerra suas sessões abertas.
+Em **Acessos**, busque por nome, código ou responsável e use os filtros de empresa, responsável e estado para localizar um perfil. Clique em **Editar** para corrigir empresa, responsável, nome, código ou trocar a senha. Deixe os dois campos de senha vazios para mantê-la. As opções **Desativar acesso**, **Ativar acesso** e **Excluir acesso** ficam no fim do formulário de edição. A exclusão é permanente e exige confirmação. Editar ou excluir um perfil encerra suas sessões abertas.
 
 ## Equipe: consultar e registrar uma ordem
 
