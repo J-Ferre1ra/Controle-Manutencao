@@ -869,13 +869,13 @@ function FieldApp({
         {tab === 'apresentacao' ? <Suspense fallback={<div className="presentation-empty">Carregando apresentação…</div>}><Presentation orders={assignedOrders} compact exportContext={{ company: kindLabels[session.kind], responsible: session.responsible || session.team || 'Sem responsável', operatorName: session.operatorName }} /></Suspense> : <>
         <label className="search-field">
           <span aria-hidden="true">⌕</span>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === 'executadas' ? 'Buscar registro, ordem ou quem executou' : 'Buscar ordem, alimentador ou barramento'} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === 'executadas' ? 'Buscar OS ou executor' : 'Buscar OS ou local'} />
           {query && <button type="button" aria-label="Limpar busca" onClick={() => setQuery('')}>×</button>}
         </label>
 
         <div className="order-card-list">
           {filteredOrders.map((order) => (
-            <article className="order-card" key={order.id}>
+          <article className={`order-card order-card-${order.status}`} key={order.id}>
               <div className="order-card-top"><span className="order-id">OS {order.numConsequencia}</span><StatusBadge status={order.status} /></div>
               <h2>{order.servico || 'Serviço sem descrição'}</h2>
               <p className="order-location">{order.endereco || [order.alimentador, order.barramento].filter(Boolean).join(' · ')}</p>
@@ -1134,7 +1134,7 @@ function AdminApp({
               {saveStatus === 'saving' ? 'Salvando…' : saveStatus === 'saved' ? 'Salvo no servidor' : saveStatus === 'error' ? 'Falha ao salvar' : 'Conectado'}
             </span>
             {saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}
-            <button className="button button-primary export-button" onClick={() => { void exportPortfolio(); }}>Exportar carteira</button>
+            <button className="button button-export export-button" onClick={() => { void exportPortfolio(); }}>Exportar carteira</button>
           </div>
         </header>
 
@@ -1445,7 +1445,7 @@ function OrdersPage({
   return (
     <main className="admin-content">
       <section className="panel orders-panel">
-        <div className="panel-heading"><div><h2>Ordens da carteira</h2><p className="muted">{orders.length.toLocaleString('pt-BR')} registros na seleção atual</p></div><div className="orders-heading-actions">{hasFilters && <button className="text-button" onClick={onClearFilters}>Limpar filtros</button>}<button className="button button-secondary" onClick={onExport}>Exportar seleção</button></div></div>
+        <div className="panel-heading"><div><h2>Ordens da carteira</h2><p className="muted">{orders.length.toLocaleString('pt-BR')} registros na seleção atual</p></div><div className="orders-heading-actions">{hasFilters && <button className="text-button" onClick={onClearFilters}>Limpar filtros</button>}<button className="button button-export" onClick={onExport}>Exportar seleção</button></div></div>
         <div className="filter-row orders-filter-row">
           <label className="search-field admin-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OS, equipe, responsável ou protocolo" /></label>
           <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team.key} value={team.key}>{team.label}</option>)}</select>
@@ -1682,7 +1682,7 @@ function ImportPage({
             <button type="button" className={importMode === 'substituir' ? 'segment active' : 'segment'} onClick={() => { setImportMode('substituir'); setError(''); setMessage(''); }}>Nova carteira do mês</button>
             <button type="button" className={importMode === 'complementar' ? 'segment active' : 'segment'} onClick={() => { setImportMode('complementar'); setError(''); setMessage(''); }}>Acrescentar ordens</button>
           </div>
-          {importMode === 'substituir' && orders.length > 0 && <div className="security-note"><strong>Troca mensal da carteira</strong><span>1. Exporte e guarde a carteira atual para auditoria. 2. O botão de exclusão será liberado. 3. Exclua a carteira atual e importe a planilha do novo mês.</span><div className="portfolio-action-row"><button type="button" className="button button-secondary" disabled={exporting || saveStatus === 'saving' || saveStatus === 'error'} onClick={() => { void exportCurrentPortfolio(); }}>{exporting ? 'Exportando…' : 'Exportar carteira completa'}</button><button type="button" className="button button-danger" disabled={!auditSnapshot || deletingPortfolio || saveStatus === 'saving' || saveStatus === 'error'} onClick={() => { void deleteCurrentPortfolio(); }}>{deletingPortfolio ? 'Excluindo…' : 'Excluir carteira deste mês'}</button></div>{auditSnapshot && <span className="success-text">Exportação concluída: {auditSnapshot.orderCount.toLocaleString('pt-BR')} ordens. Exclusão liberada.</span>}</div>}
+          {importMode === 'substituir' && orders.length > 0 && <div className="security-note"><strong>Troca mensal da carteira</strong><span>1. Exporte e guarde a carteira atual para auditoria. 2. O botão de exclusão será liberado. 3. Exclua a carteira atual e importe a planilha do novo mês.</span><div className="portfolio-action-row"><button type="button" className="button button-export" disabled={exporting || saveStatus === 'saving' || saveStatus === 'error'} onClick={() => { void exportCurrentPortfolio(); }}>{exporting ? 'Exportando…' : 'Exportar carteira completa'}</button><button type="button" className="button button-danger" disabled={!auditSnapshot || deletingPortfolio || saveStatus === 'saving' || saveStatus === 'error'} onClick={() => { void deleteCurrentPortfolio(); }}>{deletingPortfolio ? 'Excluindo…' : 'Excluir carteira deste mês'}</button></div>{auditSnapshot && <span className="success-text">Exportação concluída: {auditSnapshot.orderCount.toLocaleString('pt-BR')} ordens. Exclusão liberada.</span>}</div>}
           {importMode === 'substituir' && orders.length === 0 && portfolioDeleted && <div className="mapping-note"><strong>Carteira anterior excluída</strong><span>Selecione a planilha geral do novo mês e confirme a importação para disponibilizar as ordens às equipes.</span></div>}
           {importMode === 'complementar' && <div className="mapping-note"><strong>Importação complementar</strong><span>As novas ordens serão acrescentadas à carteira atual. As ordens existentes e seus registros serão preservados; números já cadastrados não serão duplicados.</span></div>}
           <label className="upload-dropzone">

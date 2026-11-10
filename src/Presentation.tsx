@@ -117,7 +117,7 @@ export function Presentation({ orders, compact = false, exportContext }: { order
   }
 
   return <div className={compact ? 'presentation presentation-compact' : 'presentation'}>
-    <div className="presentation-intro"><div><h2>{compact ? 'Sua carteira em números' : 'Apresentação da carteira'}</h2><p>Quantidade ajustada da carteira atual, atualizada conforme as ordens são registradas.</p></div><div className="presentation-actions"><span className="presentation-live"><i />Dados atuais</span>{exportContext && orders.length > 0 && <button type="button" className="button button-secondary presentation-export" onClick={() => { void downloadPresentation(); }} disabled={exporting}>{exporting ? 'Gerando PDF…' : 'Exportar PDF'}</button>}</div></div>
+    <div className="presentation-intro"><div><h2>{compact ? 'Sua carteira em números' : 'Apresentação da carteira'}</h2><p>Quantidade ajustada da carteira atual, atualizada conforme as ordens são registradas.</p></div><div className="presentation-actions"><span className="presentation-live"><i />Dados atuais</span>{exportContext && orders.length > 0 && <button type="button" className="button button-export presentation-export" onClick={() => { void downloadPresentation(); }} disabled={exporting}>{exporting ? 'Gerando PDF…' : 'Exportar PDF'}</button>}</div></div>
     {exportError && <div className="inline-error" role="alert">{exportError}</div>}
     {orders.length === 0 ? <div className="presentation-empty">Nenhuma ordem vinculada a este acesso nesta carteira.</div> : <>
       <section className="presentation-summary" aria-label="Resumo da quantidade ajustada">
