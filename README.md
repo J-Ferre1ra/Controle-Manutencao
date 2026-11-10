@@ -1,64 +1,57 @@
 # Controle de Execução de Ordens
 
-Aplicação web responsiva em React e TypeScript. Em produção, a interface e a API serão servidas pelo Cloudflare Workers, e os dados compartilhados ficarão no Cloudflare D1. Os computadores que acessam pelo navegador não precisam de Python, Pandas ou Node.js.
+Aplicação web para reunir a carteira mensal de ordens, distribuir a visualização por empresa e responsável e registrar execuções ou impedimentos com protocolo. O supervisor importa, acompanha e exporta a carteira; cada equipe usa seu próprio acesso no navegador.
 
-- [Manual do usuário](docs/manual-do-usuario.md): login, importação, acessos, execução, impedimentos, protocolos e troca mensal.
-- [Documentação do projeto](docs/documentacao-do-projeto.md): arquitetura, dados, API, sincronização e manutenção.
+O sistema publicado está em [controle-manutencao-neoenergia.programation-077.workers.dev](https://controle-manutencao-neoenergia.programation-077.workers.dev). Celulares e computadores precisam apenas do navegador e de conexão com a internet.
 
-## Sincronização
+## Documentação
 
-Cada execução é salva no banco. As telas abertas consultam mudanças a cada 2 minutos e atualizam as ordens sem recarregar a página; ao voltar para uma aba que estava em segundo plano, ela consulta imediatamente. A carteira só é enviada completa quando muda a importação ou a configuração administrativa; as atualizações das equipes trazem apenas ordens alteradas desde a consulta anterior.
+- [Manual de uso](docs/manual-do-usuario.md) — tarefas das equipes e do supervisor, significado dos números e solução de problemas comuns.
+- [Documentação técnica](docs/documentacao-do-projeto.md) — tecnologias, regras de negócio, arquitetura, dados, sincronização, desenvolvimento e publicação.
 
-O formulário de execução avisa antes de fechar ou recarregar a página quando há informações ainda não enviadas. O navegador exibe a confirmação padrão, sem permitir personalizar o texto.
+## Como funciona
 
-## Executar para desenvolvimento
+1. O supervisor importa a planilha geral do mês. As ordens ficam no banco de dados e são vinculadas ao tipo de empresa e ao valor de **RESPONSÁVEL**.
+2. Uma pessoa autorizada registra a execução ou o impedimento. O servidor confirma a gravação e devolve um protocolo.
+3. A execução conclui a ordem; o impedimento fica no histórico e mantém a ordem pendente para nova tentativa.
+4. As telas abertas recebem avisos de mudanças e consultam os dados autorizados. A apresentação usa **QTD. AJUSTADA**; apenas a aderência final conta ordens.
+5. O supervisor pode acrescentar ordens durante o mês, exportar a carteira e fazer a troca mensal.
 
-Requer Node.js e npm na máquina de desenvolvimento:
+A importação não modifica o arquivo original. A exportação cria um novo arquivo com os campos de execução e auditoria.
 
-```bash
-npm install
+## Tecnologias principais
+
+| Parte | Tecnologia |
+| --- | --- |
+| Interface | React 19, TypeScript, Vite e CSS responsivo |
+| Gráficos | Recharts |
+| Leitura e exportação de planilhas | SheetJS (xlsx) |
+| API e arquivos publicados | Cloudflare Workers e Workers Assets |
+| Dados | Cloudflare D1 |
+| Avisos entre aparelhos | Durable Objects e WebSocket |
+| Desenvolvimento e publicação | Node.js, npm e Wrangler |
+
+As versões e os scripts ficam em [package.json](package.json). A configuração da Cloudflare fica em [wrangler.jsonc](wrangler.jsonc).
+
+## Desenvolvimento local
+
+Com Node.js 20 ou mais recente:
+
+~~~bash
+npm ci
 npm run dev
-```
+~~~
 
-Gerar a interface que será publicada:
+Esse comando abre somente a interface de desenvolvimento. Para exercitar login, gravação e sincronização com um banco **local**, consulte a seção de desenvolvimento da [documentação técnica](docs/documentacao-do-projeto.md). Para compilar a versão de publicação:
 
-```bash
+~~~bash
 npm run build
-```
+~~~
 
-## Preparar a publicação Cloudflare
+## Publicação e dados
 
-É necessário estar autenticado na conta Cloudflare que será usada. O domínio ainda pode ser definido depois; o Worker também pode ser acessado pelo endereço `workers.dev`.
+O ramo **main** está conectado ao Workers Builds da Cloudflare. Um push inicia o build e a publicação; uma aba que já estava aberta precisa ser recarregada para receber a nova interface. O banco D1 e os segredos do supervisor já estão configurados na instalação atual. Não recrie o banco nem coloque senhas em arquivos versionados para fazer uma atualização comum.
 
-1. Autentique o Wrangler: `npx wrangler login`.
-2. Crie o banco: `npm run cf:db:create`.
-3. Copie o `database_id` exibido para `wrangler.jsonc`, substituindo `PREENCHER_COM_O_ID_DO_D1`.
-4. Aplique as tabelas no banco remoto: `npm run cf:db:migrate:remote`.
-5. Configure os dois segredos do supervisor sem colocá-los no código ou no Git:
+O sistema exige conexão para salvar. Os protocolos são a confirmação de gravação; uma mudança visual antes dessa confirmação não substitui o registro no servidor. A carteira exportada é uma cópia para consulta e auditoria, não a planilha original com suas fórmulas e formatação.
 
-   ```bash
-   npx wrangler secret put SUPERVISOR_CODE
-   npx wrangler secret put SUPERVISOR_PASSWORD
-   ```
-
-6. Publique a interface e a API: `npm run deploy`.
-
-O endereço final será informado pelo Wrangler. Depois do primeiro acesso administrativo, o supervisor importa as planilhas do mês e cadastra os acessos das equipes. Os arquivos de referência antigos não são carregados automaticamente.
-
-## Estimativa de uso e custo
-
-Como referência, 60 aparelhos ativos por 12 horas, consultando a cada 2 minutos, geram cerca de 21.600 consultas diárias ou 648 mil em 30 dias, sem contar login e registros. A sincronização incremental lê o cursor e somente as ordens alteradas. O Workers Paid inclui 10 milhões de requisições mensais; uso acima das franquias e outros produtos podem gerar cobrança adicional. Consulte a [tabela oficial de preços do Cloudflare Workers e D1](https://developers.cloudflare.com/workers/platform/pricing/) para os limites atuais.
-
-## Dados e acesso
-
-- `work_orders`: ordens, estado atual e dados de execução.
-- `access_profiles`: perfis e códigos das equipes; senhas ficam armazenadas como hash.
-- `execution_records`: histórico de auditoria e protocolos.
-- `photos`: imagens de constatação de impedimentos.
-- `sync_metadata`: revisões usadas para enviar apenas as mudanças aos aparelhos.
-
-As imagens são exceções de impedimento, limitadas a 1,2 MB cada nesta versão. Os acessos das equipes veem somente as ordens da equipe e, quando vinculados, do responsável. Apenas o supervisor importa e altera a carteira.
-
-## Planilhas
-
-Os arquivos enviados foram usados para identificar a estrutura, não para preencher o banco. A exportação e a análise administrativa usam a carteira importada pelo supervisor. O sistema conserva cabeçalhos e ordem das colunas de origem e acrescenta os campos de execução e auditoria; não replica estilos, fórmulas ou mesclagens visuais dos arquivos originais.
+Este repositório descreve o funcionamento do produto. Indicadores de economia de tempo ou de resultado operacional serão tratados após definição de uma linha de base e validação pela supervisão.
