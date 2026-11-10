@@ -866,7 +866,7 @@ function FieldApp({
           <button type="button" className={tab === 'apresentacao' ? 'segment active' : 'segment'} onClick={() => setTab('apresentacao')}>Apresentação</button>
         </div>
 
-        {tab === 'apresentacao' ? <Suspense fallback={<div className="presentation-empty">Carregando apresentação…</div>}><Presentation orders={assignedOrders} compact /></Suspense> : <>
+        {tab === 'apresentacao' ? <Suspense fallback={<div className="presentation-empty">Carregando apresentação…</div>}><Presentation orders={assignedOrders} compact exportContext={{ company: kindLabels[session.kind], responsible: session.responsible || session.team || 'Sem responsável', operatorName: session.operatorName }} /></Suspense> : <>
         <label className="search-field">
           <span aria-hidden="true">⌕</span>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === 'executadas' ? 'Buscar registro, ordem ou quem executou' : 'Buscar ordem, alimentador ou barramento'} />

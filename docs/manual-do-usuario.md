@@ -56,7 +56,7 @@ O impedimento fica no histórico para conferência do supervisor, com motivo, ob
 
 ### Acompanhar a carteira
 
-A terceira aba, **Apresentação**, reúne a quantidade ajustada por frente de serviço, por **AVANÇO** e por UTD. Selecione uma frente em **Visão por UTD** para detalhá-la. A seção **Aderência da carteira** mostra quantas ordens foram concluídas.
+A terceira aba, **Apresentação**, reúne a quantidade ajustada por frente de serviço, por **AVANÇO** e por UTD. Selecione uma frente em **Visão por UTD** para detalhá-la. A seção **Aderência da carteira** mostra quantas ordens foram concluídas. Use **Exportar PDF** para baixar a apresentação da sua carteira com os totais e a frente selecionada.
 
 Ao receber um aviso de registro feito por outra equipe da mesma empresa, a tela consulta os dados atualizados. O aviso mostra quem registrou e pode ser fechado. A lista de ordens continua limitada ao perfil de acesso.
 

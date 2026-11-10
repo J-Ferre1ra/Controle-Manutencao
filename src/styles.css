@@ -307,6 +307,8 @@ h1, h2, h3, p { margin-top: 0; }
 .presentation-intro p, .presentation-panel-heading p { margin: 0; color: #6d838d; font-size: 15px; line-height: 1.45; }
 .presentation-live { display: inline-flex; flex: none; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid #cfe8d9; border-radius: 20px; color: #1e754b; background: #f0faf4; font-size: 15px; font-weight: 700; }
 .presentation-live i { width: 7px; height: 7px; border-radius: 50%; background: #00a859; }
+.presentation-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.presentation-export { min-height: 38px; white-space: nowrap; }
 .presentation-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .presentation-summary > div, .presentation-panel { min-width: 0; padding: 16px; border: 1px solid #dce7ea; border-radius: 10px; background: #fff; }
 .presentation-summary > div { display: grid; align-content: start; gap: 5px; background: #fbfdfd; }
@@ -716,6 +718,8 @@ h1, h2, h3, p { margin-top: 0; }
   .execution-notification-stack { right: 10px; bottom: max(10px, env(safe-area-inset-bottom)); left: 10px; width: auto; }
   .presentation { gap: 11px; }
   .presentation-intro, .presentation-panel-heading { flex-wrap: wrap; }
+  .presentation-actions { justify-content: space-between; width: 100%; }
+  .presentation-export { min-height: 42px; }
   .presentation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
   .presentation-summary > div, .presentation-panel { padding: 11px; }
   .presentation-summary > div:last-child { grid-column: 1 / -1; }

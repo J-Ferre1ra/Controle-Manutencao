@@ -4,6 +4,7 @@ import { parseNumericQuantity } from './lib/quantity.js';
 import type { Order } from './types';
 
 type Group = { label: string; planned: number; completed: number; orders: number; completedOrders: number };
+type ExportContext = { company: string; responsible: string; operatorName: string };
 
 const fronts = ['Poda LM', 'Roço manual', 'Bobcat', 'Linha viva', 'Estrutural próprio', 'Outros serviços'];
 const number = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 });
@@ -72,8 +73,10 @@ function Chart({ groups, title }: { groups: Group[]; title: string }) {
   </div></>;
 }
 
-export function Presentation({ orders, compact = false }: { orders: Order[]; compact?: boolean }) {
+export function Presentation({ orders, compact = false, exportContext }: { orders: Order[]; compact?: boolean; exportContext?: ExportContext }) {
   const [front, setFront] = useState('Poda LM');
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const frontGroups = useMemo(() => {
     const groups = summarize(orders, frontOf);
     return fronts.map((label) => groups.find((group) => group.label === label)).filter((group): group is Group => Boolean(group));
@@ -89,8 +92,33 @@ export function Presentation({ orders, compact = false }: { orders: Order[]; com
   const percent = total > 0 ? Math.round(completed / total * 100) : 0;
   const ordersPercent = orders.length > 0 ? Math.round(completedOrders / orders.length * 100) : 0;
 
+  async function downloadPresentation() {
+    if (!exportContext || exporting || orders.length === 0) return;
+    setExporting(true);
+    setExportError('');
+    try {
+      const { exportPresentationPdf } = await import('./lib/export-presentation-pdf');
+      await exportPresentationPdf({
+        ...exportContext,
+        planned: total,
+        completed,
+        orderCount: orders.length,
+        completedOrders,
+        fronts: frontGroups,
+        advances: progressGroups,
+        utds: byUtd,
+        selectedFront,
+      });
+    } catch {
+      setExportError('Não foi possível gerar o PDF. Tente novamente.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return <div className={compact ? 'presentation presentation-compact' : 'presentation'}>
-    <div className="presentation-intro"><div><h2>{compact ? 'Sua carteira em números' : 'Apresentação da carteira'}</h2><p>Quantidade ajustada da carteira atual, atualizada conforme as ordens são registradas.</p></div><span className="presentation-live"><i />Dados atuais</span></div>
+    <div className="presentation-intro"><div><h2>{compact ? 'Sua carteira em números' : 'Apresentação da carteira'}</h2><p>Quantidade ajustada da carteira atual, atualizada conforme as ordens são registradas.</p></div><div className="presentation-actions"><span className="presentation-live"><i />Dados atuais</span>{exportContext && orders.length > 0 && <button type="button" className="button button-secondary presentation-export" onClick={() => { void downloadPresentation(); }} disabled={exporting}>{exporting ? 'Gerando PDF…' : 'Exportar PDF'}</button>}</div></div>
+    {exportError && <div className="inline-error" role="alert">{exportError}</div>}
     {orders.length === 0 ? <div className="presentation-empty">Nenhuma ordem vinculada a este acesso nesta carteira.</div> : <>
       <section className="presentation-summary" aria-label="Resumo da quantidade ajustada">
         <div><span>Quantidade ajustada</span><strong>{number.format(total)}</strong><small>prevista na carteira</small></div>
