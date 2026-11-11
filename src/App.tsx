@@ -4,7 +4,7 @@ import { apiRequest, readSharedState } from './data/api';
 import type { SharedAppState, SyncCursor } from './data/api';
 import { exportControlWorkbook, headersFromSheet, mapSpreadsheetRow, readWorkbook, rowsFromSheet } from './lib/excel';
 import type { ParsedWorkbook } from './lib/excel';
-import { presentationPeriod } from './lib/presentation-data.js';
+import { isPortfolioExpired, portfolioDeadlineLabel, presentationPeriod } from './lib/presentation-data.js';
 import { parseNumericQuantity } from './lib/quantity.js';
 import type { AccessProfile, AdminPage, ExecutionNotification, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
 
@@ -107,6 +107,15 @@ function submitOnEnter(event: KeyboardEvent<HTMLInputElement>) {
 
 function parseQuantity(value: string): number {
   return parseNumericQuantity(value) ?? 0;
+}
+
+function useCurrentDate(): Date {
+  const [today, setToday] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setToday(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return today;
 }
 
 type AdminSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -632,6 +641,7 @@ function FieldApp({
   const [photoLoading, setPhotoLoading] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const today = useCurrentDate();
 
   const hasUnsavedDraft = page === 'registro' && (
     quantity !== null || observation.trim().length > 0 || reason.length > 0 || photo.length > 0 || photoLoading
@@ -662,6 +672,8 @@ function FieldApp({
   const completedOrders = assignedOrders.filter((order) => order.status === 'executada');
   const pendingAdjusted = pendingOrders.reduce((sum, order) => sum + parseQuantity(order.qtdAjustada), 0);
   const completedAdjusted = completedOrders.reduce((sum, order) => sum + parseQuantity(order.qtdAjustada), 0);
+  const portfolioPeriod = presentationPeriod(assignedOrders, today);
+  const deadlineExpired = assignedOrders.length > 0 && isPortfolioExpired(portfolioPeriod, today);
   const formatAdjusted = (value: number) => value.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 
   const filteredOrders = useMemo(() => assignedOrders.filter((order) => {
@@ -712,6 +724,10 @@ function FieldApp({
   async function saveExecution() {
     if (saving) return;
     if (!selectedOrder) return;
+    if (deadlineExpired) {
+      setError(`O prazo da carteira terminou em ${portfolioDeadlineLabel(portfolioPeriod)}. Peça à supervisão para incluir a ordem na carteira seguinte.`);
+      return;
+    }
     if (executionMode === 'impedimento' && (!reason || !observation.trim())) {
       setError('Informe o motivo e explique o impedimento antes de salvar.');
       return;
@@ -793,6 +809,7 @@ function FieldApp({
           <button className="back-link" onClick={leaveExecutionForm}>← Voltar às ordens</button>
           <h1>{executionMode === 'impedimento' ? 'Registrar impedimento' : 'Registrar execução'}</h1>
           <OrderSummary order={selectedOrder} />
+          {deadlineExpired && <div className="inline-error" role="alert">O prazo desta carteira terminou em {portfolioDeadlineLabel(portfolioPeriod)}. A ordem permanece pendente para conferência pela supervisão.</div>}
 
           <div className="segmented-control segmented-two status-choice" role="group" aria-label="Situação do serviço">
             <button type="button" className={executionMode === 'executada' ? 'segment active' : 'segment'} onClick={() => { setExecutionMode('executada'); setError(''); }}>Executado</button>
@@ -840,8 +857,8 @@ function FieldApp({
           )}
 
           {error && <div className="inline-error" role="alert">{error}</div>}
-          <button className="button button-primary button-full" onClick={saveExecution} disabled={saving || photoLoading}>
-            {photoLoading ? 'Preparando foto…' : saving ? 'Salvando…' : executionMode === 'impedimento' ? 'Registrar impedimento' : 'Salvar e gerar protocolo'}
+          <button className="button button-primary button-full" onClick={saveExecution} disabled={saving || photoLoading || deadlineExpired}>
+            {deadlineExpired ? 'Prazo encerrado' : photoLoading ? 'Preparando foto…' : saving ? 'Salvando…' : executionMode === 'impedimento' ? 'Registrar impedimento' : 'Salvar e gerar protocolo'}
           </button>
           <p className="small-note">O registro inclui responsável, equipe, data e horário.</p>
         </div>
@@ -859,7 +876,8 @@ function FieldApp({
         </div>
         {session.responsible && <div className="responsible-banner"><span>Responsável vinculado</span><strong>{session.responsible}</strong></div>}
         <h1>{tab === 'apresentacao' ? 'Apresentação da equipe' : 'Ordens da equipe'}</h1>
-        <p className="muted">{formatAdjusted(pendingAdjusted)} de quantidade ajustada pendente · {pendingOrders.length} ordens</p>
+        <p className="muted">{formatAdjusted(pendingAdjusted)} de quantidade ajustada pendente · {pendingOrders.length} ordens{deadlineExpired ? ' não executadas no prazo' : ''}</p>
+        {assignedOrders.length > 0 && <p className="field-deadline">Prazo da carteira: {portfolioDeadlineLabel(portfolioPeriod)}{deadlineExpired ? ' · encerrado' : ''}</p>}
 
         <div className="segmented-control segmented-three list-tabs">
           <button type="button" className={tab === 'pendentes' ? 'segment active' : 'segment'} onClick={() => setTab('pendentes')}>Pendentes {formatAdjusted(pendingAdjusted)}</button>
@@ -894,7 +912,9 @@ function FieldApp({
                   {order.foto && <PhotoEvidence photo={order.foto} orderNumber={order.numConsequencia} />}
                 </div>
               )}
-              {tab === 'pendentes' ? (
+              {tab === 'pendentes' && deadlineExpired ? (
+                <div className="closed-order-note">Não executada no prazo · aguarda a carteira do próximo mês.</div>
+              ) : tab === 'pendentes' ? (
                 <button className="button button-primary button-full" onClick={() => openOrder(order)}>Registrar execução</button>
               ) : (
                 <div className="completed-summary">
@@ -1053,6 +1073,9 @@ function AdminApp({
   const [statusFilter, setStatusFilter] = useState('');
   const [serviceFilter, setServiceFilter] = useState('');
   const [createdProfile, setCreatedProfile] = useState<AccessProfile | null>(null);
+  const today = useCurrentDate();
+  const portfolioPeriod = presentationPeriod(orders, today);
+  const deadlineExpired = orders.length > 0 && isPortfolioExpired(portfolioPeriod, today);
 
   useEffect(() => {
     if (!createdProfile) return;
@@ -1136,8 +1159,8 @@ function AdminApp({
           </div>
         </header>
 
-        {page === 'painel' && <Dashboard orders={orders} search={search} setSearch={setSearch} setTeamFilter={setTeamFilter} setStatusFilter={setStatusFilter} setServiceFilter={setServiceFilter} setPage={setPage} />}
-        {page === 'controle' && <ControlPage orders={orders} />}
+        {page === 'painel' && <Dashboard orders={orders} portfolioDeadline={portfolioDeadlineLabel(portfolioPeriod)} deadlineExpired={deadlineExpired} search={search} setSearch={setSearch} setTeamFilter={setTeamFilter} setStatusFilter={setStatusFilter} setServiceFilter={setServiceFilter} setPage={setPage} />}
+        {page === 'controle' && <ControlPage orders={orders} deadlineExpired={deadlineExpired} />}
         {page === 'apresentacao' && <main className="admin-content"><Suspense fallback={<div className="presentation-empty">Carregando apresentação…</div>}><Presentation orders={orders} exportContext={{ company: 'Neoenergia e Vencer', responsible: 'Carteira geral', operatorName: 'Supervisão' }} /></Suspense></main>}
         {page === 'ordens' && (
           <OrdersPage
@@ -1164,6 +1187,8 @@ function AdminApp({
 
 function Dashboard({
   orders,
+  portfolioDeadline,
+  deadlineExpired,
   search,
   setSearch,
   setTeamFilter,
@@ -1172,6 +1197,8 @@ function Dashboard({
   setPage,
 }: {
   orders: Order[];
+  portfolioDeadline: string;
+  deadlineExpired: boolean;
   search: string;
   setSearch: (value: string) => void;
   setTeamFilter: (value: string) => void;
@@ -1180,6 +1207,7 @@ function Dashboard({
   setPage: (page: AdminPage) => void;
 }) {
   const executed = orders.filter((order) => order.status === 'executada').length;
+  const pending = orders.filter((order) => order.status === 'pendente').length;
   const impediments = orders.filter(hasReportedImpediment).length;
   const teamGroups = activeTeamBreakdown(orders);
   const responsibleGroups = activeResponsibleBreakdown(orders);
@@ -1201,12 +1229,15 @@ function Dashboard({
       <section className="stats-grid">
         <StatCard title="Ordens importadas" value={orders.length.toLocaleString('pt-BR')} detail="na carteira ativa" />
         <StatCard title="Executadas" value={executed.toLocaleString('pt-BR')} detail="na carteira atual" tone="success" onClick={() => quickFilter('executada')} />
-        <StatCard title="Impedimentos" value={impediments.toLocaleString('pt-BR')} detail="ordens que seguem pendentes" tone="warning" onClick={() => quickFilter('impedimento')} />
-        <StatCard title="Responsáveis na carteira" value={responsibleStats.length.toLocaleString('pt-BR')} detail="separados por empresa" />
+        <StatCard title="Impedimentos" value={impediments.toLocaleString('pt-BR')} detail={deadlineExpired ? 'incluídos nas não executadas' : 'ordens que seguem pendentes'} tone="warning" onClick={() => quickFilter('impedimento')} />
+        {deadlineExpired
+          ? <StatCard title="Não executadas" value={pending.toLocaleString('pt-BR')} detail="pendentes ao fim do mês" tone="warning" onClick={() => quickFilter('pendente')} />
+          : <StatCard title="Responsáveis na carteira" value={responsibleStats.length.toLocaleString('pt-BR')} detail="separados por empresa" />}
       </section>
+      {deadlineExpired && <div className="deadline-summary" role="status"><strong>Prazo da carteira encerrado</strong><span>{pending.toLocaleString('pt-BR')} ordem(ns) ficaram pendentes e entram como não executadas nas métricas do mês.</span></div>}
 
       <section className="panel consolidated-panel">
-        <div className="panel-heading"><h2>Efetivação dos serviços</h2><span className="demo-tag">Carteira ativa</span></div>
+        <div className="panel-heading"><h2>Efetivação dos serviços</h2><span className="demo-tag">{orders.length ? `Prazo: ${portfolioDeadline}` : 'Carteira ativa'}</span></div>
         <div className="filter-row">
           <form className="search-field admin-search" onSubmit={(event) => { event.preventDefault(); setPage('ordens'); }}><span aria-hidden="true">⌕</span><input value={search} placeholder="Buscar e pressione Enter" onChange={(event) => setSearch(event.target.value)} /></form>
           <select aria-label="Filtrar equipe" onChange={(event) => { setTeamFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as equipes</option>{teamGroups.map((team) => <option key={team.key} value={team.key}>{team.label}</option>)}</select>
@@ -1219,7 +1250,7 @@ function Dashboard({
       </section>
 
       <section className="panel progress-panel">
-        <div className="panel-heading"><h2>Efetivação por responsável</h2><span className="muted small">Neoenergia e Vencer · ordens da carteira</span></div>
+        <div className="panel-heading"><h2>Efetivação por responsável</h2><span className="muted small">Neoenergia e Vencer · {responsibleStats.length} responsáveis</span></div>
         {responsibleStats.length > 0
           ? <div className="progress-grid">{responsibleStats.map((stat) => <ProgressBar key={stat.label} {...stat} />)}</div>
           : <div className="empty-state"><strong>Nenhum responsável na carteira</strong><span>Importe uma planilha com a coluna RESPONSÁVEL preenchida.</span></div>}
@@ -1228,7 +1259,7 @@ function Dashboard({
   );
 }
 
-function ControlPage({ orders }: { orders: Order[] }) {
+function ControlPage({ orders, deadlineExpired }: { orders: Order[]; deadlineExpired: boolean }) {
   const [showAllServices, setShowAllServices] = useState(false);
   const [showAllResponsibles, setShowAllResponsibles] = useState(false);
   const executed = orders.filter((order) => order.status === 'executada').length;
@@ -1291,21 +1322,21 @@ function ControlPage({ orders }: { orders: Order[] }) {
       <section className="control-metrics">
         <div className="control-metric"><span>Ordens na carteira</span><strong>{total.toLocaleString('pt-BR')}</strong><small>base atual</small></div>
         <div className="control-metric"><span>Executadas</span><strong className="metric-success">{executed.toLocaleString('pt-BR')}</strong><small>{Math.round(executedPercent)}% da carteira</small></div>
-        <div className="control-metric"><span>Com impedimento</span><strong className="metric-warning">{impediments.toLocaleString('pt-BR')}</strong><small>continuam pendentes</small></div>
-        <div className="control-metric"><span>Pendentes</span><strong>{pending.toLocaleString('pt-BR')}</strong><small>inclui as com impedimento</small></div>
+        <div className="control-metric"><span>Com impedimento</span><strong className="metric-warning">{impediments.toLocaleString('pt-BR')}</strong><small>{deadlineExpired ? 'incluídos nas não executadas' : 'continuam pendentes'}</small></div>
+        <div className="control-metric"><span>{deadlineExpired ? 'Não executadas' : 'Pendentes'}</span><strong>{pending.toLocaleString('pt-BR')}</strong><small>{deadlineExpired ? 'pendentes ao fim do mês' : 'inclui as com impedimento'}</small></div>
       </section>
 
       <section className="control-chart-grid">
         <div className="panel">
           <div className="panel-heading"><div><h2>Situação das ordens</h2><p className="muted">Distribuição da carteira atual</p></div></div>
           <div className="status-chart-layout">
-            <div className="status-donut" role="img" aria-label={`${executed} executadas, ${impediments} pendentes com impedimento e ${pendingWithoutImpediment} outras pendentes`} style={{ background: donutBackground }}>
+            <div className="status-donut" role="img" aria-label={`${executed} executadas, ${impediments} ${deadlineExpired ? 'não executadas com impedimento' : 'pendentes com impedimento'} e ${pendingWithoutImpediment} ${deadlineExpired ? 'demais não executadas' : 'outras pendentes'}`} style={{ background: donutBackground }}>
               <div className="status-donut-center"><strong>{total ? Math.round(executedPercent) + '%' : '—'}</strong><span>executadas</span></div>
             </div>
             <div className="status-legend">
               <div className="status-legend-item"><span><i className="status-dot dot-executed" />Executadas</span><strong>{executed}</strong></div>
-              <div className="status-legend-item"><span><i className="status-dot dot-impediment" />Pendentes com impedimento</span><strong>{impediments}</strong></div>
-              <div className="status-legend-item"><span><i className="status-dot dot-pending" />Outras pendentes</span><strong>{pendingWithoutImpediment}</strong></div>
+              <div className="status-legend-item"><span><i className="status-dot dot-impediment" />{deadlineExpired ? 'Não executadas com impedimento' : 'Pendentes com impedimento'}</span><strong>{impediments}</strong></div>
+              <div className="status-legend-item"><span><i className="status-dot dot-pending" />{deadlineExpired ? 'Demais não executadas' : 'Outras pendentes'}</span><strong>{pendingWithoutImpediment}</strong></div>
             </div>
           </div>
         </div>
@@ -1486,6 +1517,9 @@ function ImportPage({
   const [exporting, setExporting] = useState(false);
   const [deletingPortfolio, setDeletingPortfolio] = useState(false);
   const [importing, setImporting] = useState(false);
+  const today = useCurrentDate();
+  const activePeriod = orders.length ? presentationPeriod(orders, today) : null;
+  const deadlineExpired = activePeriod ? isPortfolioExpired(activePeriod, today) : false;
   const rows = useMemo(() => file && sheetName ? rowsFromSheet(file.workbook, sheetName) : [], [file, sheetName]);
   const orderRows = useMemo(() => rows.map((row) => mapSpreadsheetRow(row, ''))
     .filter((row) => row.numConsequencia.trim()), [rows]);
@@ -1574,6 +1608,10 @@ function ImportPage({
   }
 
   async function importRows() {
+    if (importMode === 'complementar' && deadlineExpired) {
+      setError(`O prazo desta carteira terminou em ${portfolioDeadlineLabel(activePeriod!)}. Importe a carteira do novo mês antes de acrescentar ordens.`);
+      return;
+    }
     if (duplicateHeaders.length) {
       setError(`Cabeçalhos repetidos impedem importar os dados com segurança: ${duplicateHeaders.join(', ')}. Renomeie as colunas e selecione o arquivo novamente.`);
       return;
@@ -1597,8 +1635,8 @@ function ImportPage({
       setImporting(true);
       setError('');
       setMessage('');
-      const activePeriod = presentationPeriod(orders);
-      const activeReferenceMonth = `${activePeriod.year}-${String(activePeriod.month).padStart(2, '0')}`;
+      const currentPeriod = activePeriod || presentationPeriod(orders);
+      const activeReferenceMonth = `${currentPeriod.year}-${String(currentPeriod.month).padStart(2, '0')}`;
       const additions = orderRows.filter((mapped) => !isCancellationOrder(mapped)).map((mapped) => ({
         ...mapped,
         qtdExecutada: undefined,
@@ -1712,7 +1750,7 @@ function ImportPage({
               <label className="field-group" htmlFor="portfolio-year">Ano<input id="portfolio-year" type="number" inputMode="numeric" min="2000" max="2099" step="1" value={referenceYear} onChange={(event) => { setReferenceYear(event.target.value); setError(''); }} /></label>
             </div>
           </div>}
-          {importMode === 'complementar' && <div className="mapping-note"><strong>Importação complementar{orders.length ? ` · ${presentationPeriod(orders).label}` : ''}</strong><span>As novas ordens serão acrescentadas à carteira atual e herdarão seu mês de referência. As ordens existentes e seus registros serão preservados; números já cadastrados não serão duplicados.</span></div>}
+          {importMode === 'complementar' && <div className="mapping-note"><strong>Importação complementar{activePeriod ? ` · ${activePeriod.label}` : ''}</strong><span>{deadlineExpired ? 'O prazo desta carteira terminou. Exporte e exclua a carteira atual antes de importar o novo mês.' : 'As novas ordens serão acrescentadas à carteira atual e herdarão seu mês de referência. As ordens existentes e seus registros serão preservados; números já cadastrados não serão duplicados.'}</span></div>}
           <label className="upload-dropzone">
             <span className="file-icon">XLSX</span>
             <span><strong>{importMode === 'complementar' ? 'Selecione a planilha com as novas ordens' : 'Selecione a carteira geral do mês'}</strong><small>As abas de apresentação e resumo não serão importadas.</small></span>
@@ -1735,7 +1773,7 @@ function ImportPage({
                 </table></div>
                 {excludedRows > 0 && <p className="table-note">{excludedRows} linha(s) incompleta(s) serão ignoradas{importMode === 'complementar' ? ' por falta de número, empresa, equipe, responsável, serviço ou quantidade ajustada.' : ' por falta de número, empresa, equipe ou responsável.'}</p>}
               </div>
-              <div className="import-actions"><span>{importMode === 'complementar' ? 'Novas linhas precisam ter número, empresa, equipe, responsável, serviço e quantidade.' : 'Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não serão incluídas.'}</span><button className="button button-primary" disabled={importing || duplicateHeaders.length > 0 || (importMode === 'substituir' && orders.length > 0)} onClick={() => { void importRows(); }}>{importing ? 'Importando…' : importMode === 'complementar' ? 'Acrescentar à carteira atual' : orders.length > 0 ? 'Exclua a carteira atual primeiro' : 'Importar carteira do novo mês'}</button></div>
+              <div className="import-actions"><span>{importMode === 'complementar' ? 'Novas linhas precisam ter número, empresa, equipe, responsável, serviço e quantidade.' : 'Linhas sem EMPRESA, EQUIPE ou RESPONSÁVEL não serão incluídas.'}</span><button className="button button-primary" disabled={importing || duplicateHeaders.length > 0 || (importMode === 'complementar' && deadlineExpired) || (importMode === 'substituir' && orders.length > 0)} onClick={() => { void importRows(); }}>{importing ? 'Importando…' : importMode === 'complementar' ? deadlineExpired ? 'Prazo encerrado' : 'Acrescentar à carteira atual' : orders.length > 0 ? 'Exclua a carteira atual primeiro' : 'Importar carteira do novo mês'}</button></div>
             </>
           )}
           {message && <div className="inline-success">{message}</div>}

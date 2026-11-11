@@ -119,11 +119,22 @@ export function presentationPeriod(orders: Order[], now = new Date()): Presentat
   const beforeMonth = today.year < year || (today.year === year && today.month < month);
   const afterMonth = today.year > year || (today.year === year && today.month > month);
   const elapsedDay = beforeMonth ? 0 : afterMonth ? lastDay : today.day;
-  const workedDays = Math.max(0, countBusinessDays(year, month, elapsedDay) - 1);
+  // Ao encerrar o mês, a meta final considera todos os dias úteis da carteira.
+  const workedDays = afterMonth ? businessDays : Math.max(0, countBusinessDays(year, month, elapsedDay) - 1);
   const formatted = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' })
     .format(new Date(Date.UTC(year, month - 1, 1)));
   const label = formatted.charAt(0).toUpperCase() + formatted.slice(1);
   return { year, month, label, businessDays, workedDays };
+}
+
+export function isPortfolioExpired(period: Pick<PresentationPeriod, 'year' | 'month'>, now = new Date()): boolean {
+  const today = recifeDate(now);
+  return today.year > period.year || (today.year === period.year && today.month > period.month);
+}
+
+export function portfolioDeadlineLabel(period: Pick<PresentationPeriod, 'year' | 'month'>): string {
+  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(period.year, period.month, 0)));
 }
 
 export function expectedToDate(planned: number, period: PresentationPeriod): number {

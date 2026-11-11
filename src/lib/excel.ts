@@ -1,5 +1,6 @@
 import type * as XLSX from 'xlsx';
 import type { Order, OrderStatus } from '../types';
+import { isPortfolioExpired, presentationPeriod } from './presentation-data.js';
 import { parseNumericQuantity } from './quantity.js';
 
 export interface ParsedWorkbook {
@@ -369,6 +370,8 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
   const statusRange = range(statusColumn);
   const registrationStatusRange = range(registrationStatusIndex);
   const total = orders.length;
+  const exportedAt = new Date();
+  const deadlineExpired = total > 0 && isPortfolioExpired(presentationPeriod(orders, exportedAt), exportedAt);
   const completed = orders.filter((order) => order.status === 'executada').length;
   const blocked = orders.filter((order) => latestRegistrationStatus(order) === 'impedimento').length;
   const pending = orders.filter((order) => order.status === 'pendente').length;
@@ -381,13 +384,15 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
     ['Ordens na carteira', ''],
     ['Executadas', ''],
     ['Impedimentos', ''],
-    ['Pendentes', ''],
+    [deadlineExpired ? 'Não executadas no prazo' : 'Pendentes', ''],
     ['Percentual executado', ''],
     ['Quantidade ajustada', ''],
     ['Quantidade informada pelas equipes', ''],
     ['Quantidade considerada', ''],
     [],
-    ['Impedimentos são tentativas registradas; essas ordens continuam pendentes até uma execução. A quantidade considerada soma a QTD EXECUTADA das ordens executadas.'],
+    [deadlineExpired
+      ? 'Impedimentos são tentativas registradas. Ordens ainda pendentes ficaram não executadas no prazo. A quantidade considerada soma a QTD EXECUTADA das ordens executadas.'
+      : 'Impedimentos são tentativas registradas; essas ordens continuam pendentes até uma execução. A quantidade considerada soma a QTD EXECUTADA das ordens executadas.'],
   ];
   const presentation = formulaSheet(XLSX, presentationRows, [42, 20]);
   formulaCell(presentation, 'B3', `COUNTIF(${statusRange},"<>")`, total);
@@ -402,7 +407,7 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
 
   const teamColumn = columns.findIndex((header) => normalizeHeader(header) === 'EQUIPE');
   const teams = [...new Set(orders.map((order) => order.equipe || 'Sem equipe'))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  const teamRows: unknown[][] = [['EQUIPE', 'ORDENS', 'EXECUTADAS', 'IMPEDIMENTOS', 'PENDENTES', '% EXECUÇÃO', 'QTD. AJUSTADA', 'QTD EXECUTADA', 'QTD CONSIDERADA']];
+  const teamRows: unknown[][] = [['EQUIPE', 'ORDENS', 'EXECUTADAS', 'IMPEDIMENTOS', deadlineExpired ? 'NÃO EXECUTADAS' : 'PENDENTES', '% EXECUÇÃO', 'QTD. AJUSTADA', 'QTD EXECUTADA', 'QTD CONSIDERADA']];
   teams.forEach((team) => teamRows.push([team, '', '', '', '', '', '', '', '']));
   const byTeam = formulaSheet(XLSX, teamRows, [27, 13, 14, 16, 13, 15, 17, 17, 19]);
   teams.forEach((team, index) => {
@@ -436,7 +441,7 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
       return [`${companyKey}\u0000${responsibleKey}`, { companyKey, company: companyLabel(order.empresa), responsible: order.responsavel }];
     })).values()]
     .sort((a, b) => `${a.company} ${a.responsible}`.localeCompare(`${b.company} ${b.responsible}`, 'pt-BR'));
-  const responsibleRows: unknown[][] = [['EMPRESA', 'RESPONSÁVEL', 'ORDENS', 'EXECUTADAS', 'IMPEDIMENTOS', 'PENDENTES', '% EXECUÇÃO', 'QTD. AJUSTADA', 'QTD EXECUTADA', 'QTD CONSIDERADA']];
+  const responsibleRows: unknown[][] = [['EMPRESA', 'RESPONSÁVEL', 'ORDENS', 'EXECUTADAS', 'IMPEDIMENTOS', deadlineExpired ? 'NÃO EXECUTADAS' : 'PENDENTES', '% EXECUÇÃO', 'QTD. AJUSTADA', 'QTD EXECUTADA', 'QTD CONSIDERADA']];
   responsibleGroups.forEach(({ company, responsible }) => responsibleRows.push([company, responsible, '', '', '', '', '', '', '', '']));
   const byResponsible = formulaSheet(XLSX, responsibleRows, [25, 28, 13, 14, 16, 13, 15, 17, 17, 19]);
   const companyColumn = columns.findIndex((header) => normalizeHeader(header) === 'EMPRESA');

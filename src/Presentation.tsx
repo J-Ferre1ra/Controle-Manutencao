@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  monthPercent, mtdPercent, normalizePresentationLabel, presentationFront,
-  presentationPeriod, presentationUtd, summarizePresentation,
+  isPortfolioExpired, monthPercent, mtdPercent, normalizePresentationLabel, portfolioDeadlineLabel,
+  presentationFront, presentationPeriod, presentationUtd, summarizePresentation,
 } from './lib/presentation-data.js';
 import type { PresentationGroup, PresentationPeriod } from './lib/presentation-data.js';
 import type { Order } from './types';
@@ -73,6 +73,8 @@ export function Presentation({ orders, compact = false, exportContext }: { order
   }, []);
 
   const period = useMemo(() => presentationPeriod(orders, today), [orders, today]);
+  const deadlineExpired = orders.length > 0 && isPortfolioExpired(period, today);
+  const notExecuted = orders.filter((order) => order.status === 'pendente').length;
   const sections = useMemo(() => {
     const fronts: Array<{ title: string; front: string; band: string; utds: string[] }> = [
       { title: 'PODA LM', front: 'Poda LM', band: 'presentation-band-poda', utds: knownUtds },
@@ -116,7 +118,8 @@ export function Presentation({ orders, compact = false, exportContext }: { order
     </div>
     {exportError && <div className="inline-error" role="alert">{exportError}</div>}
     {orders.length === 0 ? <div className="presentation-empty">Nenhuma ordem vinculada a este acesso nesta carteira.</div> : <>
-      <p className="presentation-period"><strong>{period.label}</strong><span>{period.businessDays} dias úteis no mês · {period.workedDays} considerados até hoje (menos 1 dia útil)</span></p>
+      <p className="presentation-period"><strong>{period.label}</strong><span>Prazo: {portfolioDeadlineLabel(period)} · {period.businessDays} dias úteis no mês · {deadlineExpired ? 'meta final do mês' : `${period.workedDays} considerados até hoje (menos 1 dia útil)`}</span></p>
+      {deadlineExpired && <p className="presentation-deadline">Prazo encerrado · {notExecuted.toLocaleString('pt-BR')} ordem(ns) não executada(s) no mês.</p>}
       <div className="presentation-sheet">{sections.map((section) => <SheetBlock key={section.title} section={section} period={period} />)}</div>
       <p className="presentation-formula">% MTD = realizado ÷ meta proporcional aos dias úteis considerados. % mês = realizado ÷ carteira. Cores: vermelho abaixo de 90%, amarelo de 90% a 94%, verde a partir de 95%.</p>
     </>}

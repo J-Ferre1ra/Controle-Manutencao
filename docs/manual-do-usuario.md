@@ -82,6 +82,8 @@ Ao receber um aviso de registro feito por outra equipe da mesma empresa, a tela 
 
 A planilha deve ter número da ordem, **EMPRESA**, **EQUIPE** e **RESPONSÁVEL** nas linhas importadas. Linhas marcadas **CANCELAR ORDEM** são desconsideradas. A aba **ACOMPANHAMENTO** é escolhida quando identificada; abas de apresentação e resumo não são importadas como ordens.
 
+O prazo da carteira termina no último dia do mês de referência informado, pelo horário de Recife. A partir do primeiro dia do mês seguinte, as ordens ainda pendentes aparecem nas métricas como **não executadas no prazo** e ficam disponíveis apenas para consulta pela equipe. Ordens já executadas mantêm seus registros e protocolos. A mudança de classificação é calculada automaticamente, sem regravar cada ordem. Para disponibilizar uma pendência novamente, a supervisão deve incluí-la na carteira do novo mês.
+
 ### Acrescentar ordens durante o mês
 
 Em **Importar planilhas**, escolha **Acrescentar ordens**, selecione a nova planilha e confira a prévia. Cada nova linha precisa ter número da ordem, empresa, equipe, responsável, serviço e quantidade ajustada maior que zero. Clique em **Acrescentar à carteira atual**. As novas ordens herdam o mês e o ano da carteira ativa. O sistema informa quantas ordens entraram e quantas foram ignoradas ou reconhecidas como duplicadas.
@@ -89,6 +91,8 @@ Em **Importar planilhas**, escolha **Acrescentar ordens**, selecione a nova plan
 As ordens existentes e seus registros são preservados. Para identificar uma duplicata nessa importação, o sistema compara **número da ordem + empresa + responsável**.
 
 ### Trocar a carteira no mês seguinte
+
+Faça a troca a partir do primeiro dia do novo mês, para que a exportação registre as ordens que encerraram o mês como **não executadas no prazo**.
 
 1. Em **Importar planilhas > Nova carteira do mês**, use **Exportar carteira completa**.
 2. Confira se o arquivo foi baixado e guarde-o para consulta e auditoria.

@@ -18,6 +18,37 @@ function normalize(value) {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
+function orderReferenceMonth(order) {
+  const explicit = String(order.referenceMonth || '').trim();
+  if (/^20\d{2}-(0[1-9]|1[0-2])$/.test(explicit)) return explicit;
+  // Compatibilidade com carteiras importadas antes da escolha de mês e ano.
+  const fileName = normalize(order.sourceFile);
+  const year = fileName.match(/(?:^|\D)(20\d{2})(?=\D|$)/)?.[1];
+  if (!year) return '';
+  const months = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const namedMonth = months.findIndex((month) => new RegExp(`\\b${month}\\b`).test(fileName));
+  if (namedMonth >= 0) return `${year}-${String(namedMonth + 1).padStart(2, '0')}`;
+  const numeric = fileName.match(/(?:^|\D)20\d{2}[-_. ]+(0?[1-9]|1[0-2])(?=\D|$)/)
+    || fileName.match(/(?:^|\D)(0?[1-9]|1[0-2])[-_. ]+20\d{2}(?=\D|$)/);
+  return numeric ? `${year}-${String(Number(numeric[1])).padStart(2, '0')}` : '';
+}
+
+function expiredReferenceMonth(referenceMonth, now = new Date()) {
+  if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(referenceMonth)) return false;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Recife', year: 'numeric', month: 'numeric',
+  }).formatToParts(now);
+  const value = (type) => Number(parts.find((part) => part.type === type)?.value);
+  const [year, month] = referenceMonth.split('-').map(Number);
+  return value('year') > year || (value('year') === year && value('month') > month);
+}
+
+function referenceDeadlineLabel(referenceMonth) {
+  const [year, month] = referenceMonth.split('-').map(Number);
+  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(year, month, 0)));
+}
+
 function isCancelOrderValue(value) {
   return /^cancelar\s+(?:a\s+)?ordem$/.test(normalize(value));
 }
@@ -494,6 +525,9 @@ async function addSupplementalOrders(request, env) {
   if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(referenceMonth)) {
     return json({ error: 'O mês e o ano da carteira atual são necessários para acrescentar ordens. Atualize a página e tente novamente.' }, 400);
   }
+  if (expiredReferenceMonth(referenceMonth)) {
+    return json({ error: `O prazo desta carteira terminou em ${referenceDeadlineLabel(referenceMonth)}. Importe a carteira do novo mês antes de acrescentar ordens.` }, 409);
+  }
 
   const existingRows = await env.DB.prepare('SELECT payload_json FROM work_orders').all();
   if (existingRows.results.length === 0) return json({ error: 'Importe primeiro a carteira do mês para acrescentar ordens.' }, 409);
@@ -609,6 +643,10 @@ async function updateExecution(request, env, session) {
   const order = JSON.parse(row.payload_json);
   if (!allowedOrder(session, order)) return json({ error: 'Esta ordem não está vinculada ao seu acesso.' }, 403);
   if (!['pendente', 'impedimento'].includes(order.status)) return json({ error: 'Esta ordem já foi executada por outra equipe. Atualize a lista para conferir.' }, 409);
+  const referenceMonth = orderReferenceMonth(order);
+  if (expiredReferenceMonth(referenceMonth)) {
+    return json({ error: `O prazo da carteira terminou em ${referenceDeadlineLabel(referenceMonth)}. Esta ordem continua pendente para conferência pela supervisão.` }, 409);
+  }
 
   const status = body.status;
   const quantity = status === 'executada' ? Number(body.qtdExecutada) : null;

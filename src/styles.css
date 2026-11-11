@@ -244,6 +244,10 @@ h1, h2, h3, p { margin-top: 0; }
 .stat-card > strong.stat-success { color: var(--success); }
 .stat-card > strong.stat-warning { color: var(--warning); }
 .stat-card > small { color: #86979e; font-size: 15px; }
+.deadline-summary { display: flex; flex-wrap: wrap; gap: 5px 12px; padding: 12px 15px; border: 1px solid #e8d1ae; border-radius: 9px; color: #775017; background: #fff9ed; font-size: 15px; line-height: 1.45; }
+.deadline-summary strong { color: #71470b; }
+.field-deadline { margin: -7px 0 13px; color: #58727d; font-size: 15px; line-height: 1.4; }
+.closed-order-note { padding: 10px 12px; border: 1px solid #e8d1ae; border-radius: 8px; color: #775017; background: #fff9ed; font-size: 15px; line-height: 1.4; }
 .panel { min-width: 0; padding: 20px; border: 1px solid #e0e9ec; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(0, 47, 70, .025); }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .panel-heading h2 { margin: 0; color: var(--navy); font-size: 18px; }
@@ -319,6 +323,7 @@ h1, h2, h3, p { margin-top: 0; }
 .presentation-export { min-height: 38px; white-space: nowrap; }
 .presentation-period { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 12px; margin: 0; padding: 11px 14px; border: 1px solid #d5e4e9; border-radius: 9px; color: #526e7a; background: #f4f9fa; font-size: 15px; }
 .presentation-period strong { color: var(--navy); }
+.presentation-deadline { margin: 0; padding: 10px 13px; border: 1px solid #e8d1ae; border-radius: 8px; color: #775017; background: #fff9ed; font-size: 15px; line-height: 1.45; }
 .presentation-sheet { display: grid; gap: 17px; min-width: 0; padding: 16px; border: 1px solid #dce7ea; border-radius: 10px; background: #fff; }
 .presentation-sheet-section { display: grid; grid-template-columns: 94px minmax(0, 1fr); min-width: 0; }
 .presentation-sheet-band { display: grid; place-items: center; min-height: 82px; border-radius: 4px 0 0 4px; color: #fff; font-size: 16px; font-weight: 700; letter-spacing: .035em; text-align: center; }
