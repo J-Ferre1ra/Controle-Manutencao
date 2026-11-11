@@ -56,7 +56,7 @@ O impedimento fica no histórico para conferência do supervisor, com motivo, ob
 
 ### Acompanhar a carteira
 
-A terceira aba, **Apresentação**, reúne a quantidade ajustada por frente de serviço, por **AVANÇO** e por UTD. Selecione uma frente em **Visão por UTD** para detalhá-la. A seção **Aderência da carteira** mostra quantas ordens foram concluídas. O percentual exibido é o avanço do mês inteiro (concluído dividido pela carteira), não o MTD% de uma meta até a data atual. Use **Exportar apresentação** para baixar um Excel com as abas **APRESENTAÇÃO** e **ORDENS**, limitado às ordens do seu acesso.
+A terceira aba, **Apresentação**, segue os blocos da planilha: **Poda LM**, **Bobcat**, **LV** e **Carteira**. Cada linha mostra carteira, realizado, **% MTD** e **% mês**. **% mês** mostra a parcela concluída da carteira inteira; **% MTD** compara o concluído com a meta proporcional aos dias úteis até hoje, descontando um dia útil para a apresentação. A linha **Aderência de carteira** usa o número de ordens, não a quantidade ajustada. Use **Exportar apresentação** para baixar um Excel no padrão original, com as abas **APRESENTAÇÃO** e **ACOMPANHAMENTO**, limitado às ordens do seu acesso.
 
 Ao receber um aviso de registro feito por outra equipe da mesma empresa, a tela consulta os dados atualizados. O aviso mostra quem registrou e pode ser fechado. A lista de ordens continua limitada ao perfil de acesso.
 
@@ -113,7 +113,7 @@ Para alterar um perfil, localize-o pela busca ou pelos filtros e clique em **Edi
 
 Em **Protocolos**, consulte a tabela de registros e confira número da ordem, protocolo, operador, resultado, data, observação e evidência. **Abrir foto** mostra a imagem de um impedimento quando houver. Use **Atualizar** para consultar registros recentes e **Carregar mais registros** para ver páginas anteriores.
 
-**Exportar carteira**, no topo das páginas administrativas, baixa a carteira completa. Na página **Apresentação**, use **Exportar apresentação** para baixar apenas o resumo e as ordens da carteira. A exportação da carteira inclui campos de execução e auditoria e preserva os dados das colunas de origem; ela não reproduz exatamente as fórmulas, cores e mesclagens do arquivo enviado.
+**Exportar carteira**, no topo das páginas administrativas, baixa a carteira completa com campos de execução e auditoria. Na página **Apresentação**, use **Exportar apresentação** para baixar as abas **APRESENTAÇÃO** e **ACOMPANHAMENTO** com a estrutura e as cores do modelo original. O segundo arquivo contém as ordens atuais da carteira; o primeiro tipo de exportação continua sendo o indicado para consultar protocolo, observação e outros campos de auditoria.
 
 ## Salvamento e atualização das telas
 

@@ -13,8 +13,8 @@ A aplicação é online. Não existe fila de registros offline nem sincronizaç�
 | Camada | Ferramentas | Uso no projeto |
 | --- | --- | --- |
 | Interface | [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/docs/) e [Vite 6](https://vite.dev/guide/) | Telas, tipos, compilação e entrega da interface. |
-| Visualização | [Recharts](https://recharts.org/) e CSS responsivo | Gráficos da apresentação e layout para celular, tablet e computador. |
-| Exportação da apresentação | [xlsx-js-style](https://github.com/gitbrent/xlsx-js-style) | Gera um Excel com a apresentação e somente as ordens visíveis para o acesso. |
+| Visualização | React e CSS responsivo | Tabelas da apresentação e layout para celular, tablet e computador. |
+| Exportação da apresentação | Modelo Excel original e [fflate](https://github.com/101arrowz/fflate) | Preenche as abas originais **APRESENTAÇÃO** e **ACOMPANHAMENTO**, preservando estilos, mesclagens, colunas e regras de cor. |
 | Planilhas | [SheetJS](https://docs.sheetjs.com/) | Leitura de arquivos enviados e geração do arquivo Excel exportado. |
 | API | [Cloudflare Workers](https://developers.cloudflare.com/workers/) | Login, autorização, importação, gravação, consulta e arquivos da interface. |
 | Banco | [Cloudflare D1](https://developers.cloudflare.com/d1/) | Ordens, perfis, sessões, protocolos, fotos e revisões. |
@@ -98,14 +98,19 @@ A apresentação usa os dados das ordens ativas, já limitados pelo perfil no se
 | Quantidade ajustada | Soma de **QTD. AJUSTADA** da seleção. |
 | Quantidade executada na apresentação | Soma de **QTD. AJUSTADA** das ordens com estado **executada**. |
 | Quantidade pendente | Quantidade ajustada menos a quantidade ajustada das ordens executadas. |
-| Aderência da carteira | Número e percentual de ordens executadas. |
+| % mês | Quantidade ajustada concluída dividida pela quantidade ajustada da carteira. |
+| Meta até hoje | Carteira × dias úteis considerados ÷ dias úteis do mês. |
+| % MTD | Quantidade ajustada concluída dividida pela meta até hoje. Quando ainda não há dia útil considerado, o indicador fica vazio. |
+| Aderência da carteira | Número de ordens executadas, com % mês e % MTD calculados sobre a contagem de ordens. |
 | Quantidade realmente executada | Valor informado pela equipe; aparece no protocolo e na exportação, separadamente dos totais acima. |
 
 Exemplo: se a ordem tem quantidade ajustada **6** e a equipe informa **3 realizadas**, a apresentação considera **6** após a conclusão da ordem. O protocolo guarda **3** e a observação da diferença.
 
-As frentes são identificadas a partir de **SERVIÇO**, **EQUIPE**, **AVANÇO** e **EMPRESA**: Poda LM, Roço manual, Bobcat, Linha viva, Estrutural próprio e Outros serviços. O gráfico de defeitos agrupa pela coluna **AVANÇO**. A UTD vem da coluna **UTD** da planilha; quando ela não existe, usa o responsável como referência. Os gráficos são recalculados com a carteira atual e não reutilizam fórmulas ou valores em cache da aba antiga **APRESENTAÇÃO**, que pode conter referências a outro mês.
+O período vem do mês e ano no nome do arquivo de origem predominante na carteira. Se não houver mês identificável, usa o mês corrente. Dias úteis são segunda a sexta, sem calendário de feriados, como na fórmula enviada com o argumento de feriados igual a zero. Os dias considerados contam do início do mês até a data atual, inclusive, e subtraem **um dia útil**; o resultado nunca fica negativo. A data é interpretada no fuso de Recife. O cálculo se atualiza ao virar o dia e nos meses seguintes conforme a carteira importada.
 
-A aba **APRESENTAÇÃO** do arquivo exportado tem indicadores próprios, inclusive quantidade informada e considerada com base no valor realmente executado. Compare o nome e a unidade do indicador antes de confrontá-lo com os gráficos online.
+As frentes são identificadas a partir de **SERVIÇO**, **EQUIPE**, **AVANÇO** e **EMPRESA**. A tela de apresentação reproduz os blocos visíveis da planilha de referência: Poda LM, Bobcat, LV e Carteira. O último bloco agrupa pela coluna **AVANÇO** e termina com a aderência medida em ordens. A UTD vem da coluna **UTD** da planilha; quando ela não existe, usa o responsável como referência. As cores dos indicadores seguem os limites da planilha: vermelho abaixo de 90%, amarelo de 90% a menos de 95% e verde a partir de 95%. Os valores usam os registros atuais e não reutilizam resultados antigos da planilha.
+
+A exportação da apresentação usa um modelo limpo das abas originais **APRESENTAÇÃO** e **ACOMPANHAMENTO**. As fórmulas de MTD são renovadas para o período da carteira; fórmulas antigas com referências quebradas ou metas específicas sem regra definida não são copiadas. Se surgir uma UTD ou um avanço sem linha própria no modelo, o valor é agregado em uma linha livre da mesma seção, mantendo o número de linhas e as cores. A aba **ACOMPANHAMENTO** mantém as 21 colunas e o padrão visual original, preenchidos apenas com as ordens autorizadas ao acesso. A exportação administrativa **Exportar carteira** continua sendo a opção com colunas adicionais de execução e auditoria.
 
 ## API e sincronização
 

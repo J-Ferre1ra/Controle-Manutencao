@@ -22,7 +22,7 @@ const kindLabels: Record<ProfileKind, string> = {
 const pageLabels: Record<AdminPage, { title: string; subtitle: string }> = {
   painel: { title: 'Visão geral', subtitle: 'Ordens executadas, pendências e produtividade por responsável.' },
   controle: { title: 'Controle', subtitle: 'Gráficos de execução por situação, equipe, serviço e responsável.' },
-  apresentacao: { title: 'Apresentação', subtitle: 'Quantidade ajustada por frente, avanço e UTD; aderência por ordem.' },
+  apresentacao: { title: 'Apresentação', subtitle: 'Carteira, realizado, % MTD e % mês por UTD e avanço.' },
   ordens: { title: 'Ordens', subtitle: 'Consulte e exporte as ordens das carteiras importadas.' },
   importacao: { title: 'Importar planilhas', subtitle: 'Carregue as carteiras do mês e distribua as ordens.' },
   protocolos: { title: 'Protocolos', subtitle: 'Consulte os registros de execução e impedimento.' },

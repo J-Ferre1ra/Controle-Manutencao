@@ -17,15 +17,15 @@ O sistema publicado está em [controle-manutencao-neoenergia.programation-077.wo
 4. As telas abertas recebem avisos de mudanças e consultam os dados autorizados. A apresentação usa **QTD. AJUSTADA**; apenas a aderência final conta ordens.
 5. O supervisor pode acrescentar ordens durante o mês, exportar a carteira e fazer a troca mensal.
 
-A importação não modifica o arquivo original. A exportação cria um novo arquivo com os campos de execução e auditoria.
+A importação não modifica o arquivo original. A exportação da carteira completa inclui campos de execução e auditoria; a exportação da apresentação conserva as abas originais de apresentação e acompanhamento.
 
 ## Tecnologias principais
 
 | Parte | Tecnologia |
 | --- | --- |
 | Interface | React 19, TypeScript, Vite e CSS responsivo |
-| Gráficos | Recharts |
-| Exportação da apresentação | xlsx-js-style |
+| Apresentação | Tabelas responsivas em React e CSS |
+| Exportação da apresentação | Modelo Excel original e fflate |
 | Leitura e exportação de planilhas | SheetJS (xlsx) |
 | API e arquivos publicados | Cloudflare Workers e Workers Assets |
 | Dados | Cloudflare D1 |

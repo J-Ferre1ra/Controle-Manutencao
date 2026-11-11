@@ -1,57 +1,37 @@
-import type { CellStyle, WorkSheet } from 'xlsx-js-style';
+import { unzipSync, zipSync } from 'fflate';
 import type { Order } from '../types';
-import { parseNumericQuantity } from './quantity.js';
-
-interface Group {
-  label: string;
-  planned: number;
-  completed: number;
-}
+import {
+  adjustedQuantity, expectedToDate, monthPercent, mtdPercent, normalizePresentationLabel,
+  presentationFront, presentationUtd,
+} from './presentation-data.js';
+import type { PresentationPeriod } from './presentation-data.js';
 
 export interface PresentationWorkbookData {
   company: string;
   responsible: string;
   operatorName: string;
-  planned: number;
-  completed: number;
-  completedOrders: number;
-  fronts: Group[];
-  advances: Group[];
-  utds: Group[];
-  selectedFront: string;
-  orders: Array<{ order: Order; front: string; utd: string }>;
+  orders: Order[];
+  period: PresentationPeriod;
 }
 
-const navy = '003C5B';
-const ink = '183746';
-const green = '087344';
-const bluePale = 'EAF4F8';
-const rowPale = 'F7FAFB';
-const white = 'FFFFFF';
-const border = { color: { rgb: 'D5E3E8' }, style: 'thin' as const };
-const titleStyle: CellStyle = { font: { name: 'Aptos', sz: 18, bold: true, color: { rgb: white } }, fill: { fgColor: { rgb: navy } }, alignment: { vertical: 'center' } };
-const sectionStyle: CellStyle = { font: { name: 'Aptos', sz: 12, bold: true, color: { rgb: navy } }, fill: { fgColor: { rgb: bluePale } }, alignment: { vertical: 'center' } };
-const headerStyle: CellStyle = { font: { name: 'Aptos', sz: 10, bold: true, color: { rgb: white } }, fill: { fgColor: { rgb: navy } }, alignment: { vertical: 'center', wrapText: true }, border: { bottom: border } };
-const bodyStyle: CellStyle = { font: { name: 'Aptos', sz: 10, color: { rgb: ink } }, alignment: { vertical: 'center', wrapText: true }, border: { bottom: border } };
-const alternateStyle: CellStyle = { ...bodyStyle, fill: { fgColor: { rgb: rowPale } } };
-const numericStyle: CellStyle = { ...bodyStyle, alignment: { horizontal: 'right', vertical: 'center' } };
-const noteStyle: CellStyle = { font: { name: 'Aptos', sz: 10, color: { rgb: '526E7A' } }, alignment: { vertical: 'center', wrapText: true } };
+const xmlNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
+const headers = [
+  'UTD', 'ALIMENTADOR', 'CHAVE_DIRECIONADORA', 'BARRAMENTO', 'QTD. AJUSTADA',
+  'NUM_CONSEQUENCIA', 'TIPO_DOCUMENTO', 'INF', 'STATUS', 'TIPO DE PRIORIZAÇÃO',
+  'MÊS PROGRAMADO', 'EMPRESA', 'EQUIPE', 'SERVIÇO', 'AVANÇO', 'EQM',
+  'RESPONSÁVEL', 'INF IMPORTANTE', 'CHAVE A SER DESLIGADA', 'DEF. DIA', 'SAT',
+];
 
-function cellAddress(column: number, row: number): string {
-  return String.fromCharCode(65 + column) + row;
+function excelDate(year: number, month: number, day: number): number {
+  return Math.round((Date.UTC(year, month - 1, day) - Date.UTC(1899, 11, 30)) / 86_400_000);
 }
 
-function styleRow(sheet: WorkSheet, row: number, first: number, last: number, style: CellStyle): void {
-  for (let column = first; column <= last; column += 1) {
-    const address = cellAddress(column, row);
-    const cell = sheet[address] || { t: 's', v: '' };
-    cell.s = style;
-    sheet[address] = cell;
-  }
-}
-
-function ratio(completed: number, planned: number): number {
-  return planned > 0 ? completed / planned : 0;
+function safeXml(value: string): string {
+  return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
 function slug(value: string): string {
@@ -59,118 +39,206 @@ function slug(value: string): string {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'carteira';
 }
 
-function status(order: Order): string {
-  return order.status === 'executada' ? 'Executada' : 'Pendente';
+function sheetCell(document: XMLDocument, address: string): Element {
+  const all = document.getElementsByTagNameNS(xmlNamespace, 'c');
+  for (let index = 0; index < all.length; index += 1) {
+    if (all[index].getAttribute('r') === address) return all[index];
+  }
+  const rowNumber = Number(address.match(/\d+$/)?.[0]);
+  const rows = document.getElementsByTagNameNS(xmlNamespace, 'row');
+  for (let index = 0; index < rows.length; index += 1) {
+    if (Number(rows[index].getAttribute('r')) !== rowNumber) continue;
+    const cell = document.createElementNS(xmlNamespace, 'c');
+    cell.setAttribute('r', address);
+    const target = address.match(/^[A-Z]+/)?.[0] || '';
+    const siblings = rows[index].getElementsByTagNameNS(xmlNamespace, 'c');
+    for (let sibling = 0; sibling < siblings.length; sibling += 1) {
+      const column = siblings[sibling].getAttribute('r')?.match(/^[A-Z]+/)?.[0] || '';
+      if (column.length > target.length || (column.length === target.length && column > target)) {
+        rows[index].insertBefore(cell, siblings[sibling]);
+        return cell;
+      }
+    }
+    rows[index].appendChild(cell);
+    return cell;
+  }
+  throw new Error(`Célula do modelo não encontrada: ${address}`);
 }
 
-function lastRegistration(order: Order): string {
-  const last = order.situacaoRegistro || (order.status === 'impedimento' ? 'impedimento' : order.status === 'executada' ? 'executada' : undefined);
-  return last === 'impedimento' ? 'Impedimento' : last === 'executada' ? 'Execução' : 'Sem registro';
+function setNumber(document: XMLDocument, address: string, value: number, formula?: string): void {
+  const cell = sheetCell(document, address);
+  while (cell.firstChild) cell.removeChild(cell.firstChild);
+  cell.setAttribute('t', 'n');
+  if (formula) {
+    const element = document.createElementNS(xmlNamespace, 'f');
+    element.textContent = formula;
+    cell.appendChild(element);
+  }
+  const result = document.createElementNS(xmlNamespace, 'v');
+  result.textContent = String(value);
+  cell.appendChild(result);
+}
+
+function setText(document: XMLDocument, address: string, value: string): void {
+  const cell = sheetCell(document, address);
+  while (cell.firstChild) cell.removeChild(cell.firstChild);
+  cell.setAttribute('t', 'inlineStr');
+  const inline = document.createElementNS(xmlNamespace, 'is');
+  const text = document.createElementNS(xmlNamespace, 't');
+  text.textContent = value;
+  inline.appendChild(text);
+  cell.appendChild(inline);
+}
+
+function setRatio(document: XMLDocument, address: string, value: number | undefined, formula: string): void {
+  const cell = sheetCell(document, address);
+  while (cell.firstChild) cell.removeChild(cell.firstChild);
+  cell.setAttribute('t', value === undefined ? 'str' : 'n');
+  const element = document.createElementNS(xmlNamespace, 'f');
+  element.textContent = formula;
+  cell.appendChild(element);
+  const result = document.createElementNS(xmlNamespace, 'v');
+  result.textContent = value === undefined ? '' : String(value);
+  cell.appendChild(result);
+}
+
+function metric(orders: Order[]): { planned: number; completed: number } {
+  return orders.reduce((total, order) => {
+    const quantity = adjustedQuantity(order);
+    total.planned += quantity;
+    if (order.status === 'executada') total.completed += quantity;
+    return total;
+  }, { planned: 0, completed: 0 });
+}
+
+function utdMatches(value: string, label: string): boolean {
+  const normalized = normalizePresentationLabel(value).replace(/^lv\s+/, '');
+  const expected = normalizePresentationLabel(label);
+  return normalized === expected || normalized.startsWith(`${expected} `);
+}
+
+function presentationSheet(xml: string, orders: Order[], period: PresentationPeriod): string {
+  const document = new DOMParser().parseFromString(xml, 'application/xml');
+  if (document.getElementsByTagName('parsererror').length) throw new Error('Modelo da apresentação inválido.');
+  const lastDay = new Date(Date.UTC(period.year, period.month, 0)).getUTCDate();
+  setNumber(document, 'Q2', excelDate(period.year, period.month, 1));
+  setNumber(document, 'R2', excelDate(period.year, period.month, lastDay));
+  setNumber(document, 'Q3', period.businessDays, 'NETWORKDAYS.INTL(Q2,R2,1)');
+  setNumber(document, 'Q4', period.workedDays, 'IF(TODAY()<Q2,0,MAX(0,NETWORKDAYS.INTL(Q2,MIN(TODAY(),R2),1)-1))');
+
+  function fill(row: number, planned: number, completed: number): void {
+    const daily = period.businessDays > 0 ? planned / period.businessDays : 0;
+    setNumber(document, `C${row}`, planned);
+    setNumber(document, `D${row}`, completed);
+    setNumber(document, `K${row}`, daily, `IFERROR(C${row}/$Q$3,0)`);
+    setNumber(document, `L${row}`, expectedToDate(planned, period), `K${row}*$Q$4`);
+    setRatio(document, `E${row}`, mtdPercent(planned, completed, period), `IF(L${row}=0,"",D${row}/L${row})`);
+    setRatio(document, `F${row}`, monthPercent(planned, completed), `IF(C${row}=0,"",D${row}/C${row})`);
+  }
+
+  const sections: Array<{ front: string; rows: Array<[number, string]> }> = [
+    { front: 'Poda LM', rows: [[3, 'AFOGADOS'], [4, 'ARCOVERDE'], [5, 'BOM CONSELHO'], [6, 'FLORESTA'], [7, 'GARANHUNS']] },
+    { front: 'Roço manual', rows: [[11, 'AFOGADOS'], [12, 'ARCOVERDE'], [13, 'BOM CONSELHO'], [14, 'FLORESTA'], [15, 'GARANHUNS']] },
+    { front: 'Bobcat', rows: [[19, 'AFOGADOS'], [20, 'ARCOVERDE'], [21, 'BOM CONSELHO'], [22, 'FLORESTA'], [23, 'GARANHUNS']] },
+    { front: 'Linha viva', rows: [[26, 'ARCOVERDE'], [27, 'GARANHUNS']] },
+    { front: 'Estrutural próprio', rows: [[30, 'ARCOVERDE'], [31, 'GARANHUNS'], [32, 'FLORESTA']] },
+  ];
+  for (const section of sections) {
+    const sectionOrders = orders.filter((order) => presentationFront(order) === section.front);
+    const matched = section.rows.map(([row, utd]) => ({
+      row,
+      orders: sectionOrders.filter((order) => utdMatches(presentationUtd(order), utd)),
+    }));
+    const extras = sectionOrders.filter((order) => !section.rows.some(([, utd]) => utdMatches(presentationUtd(order), utd)));
+    if (extras.length) {
+      const target = matched.find((group) => group.orders.length === 0) || matched[matched.length - 1];
+      const labels = [...new Set(extras.map((order) => presentationUtd(order)))];
+      setText(document, `B${target.row}`, target.orders.length === 0 && labels.length === 1 ? labels[0].toUpperCase() : 'DEMAIS UTDs');
+      target.orders.push(...extras);
+    }
+    for (const group of matched) {
+      const values = metric(group.orders);
+      fill(group.row, values.planned, values.completed);
+    }
+  }
+  const progressRows: Array<[number, string]> = [
+    [36, 'ESTRUTURAIS'], [37, 'PONTO QUENTE / CONEXÃO'], [38, 'PARA-RAIO'],
+    [39, 'VEGETAÇÃO LM'], [40, 'VEGETAÇÃO LV'], [41, 'VEGETAÇÃO DENSA'],
+    [42, 'PARA-RAIOS'], [43, 'ESPAÇADOR'], [44, 'CLIENTE'], [45, 'INSPEÇÃO'],
+  ];
+  const matchedProgress = progressRows.map(([row, progress]) => ({
+    row,
+    orders: orders.filter((order) => normalizePresentationLabel(order.avanco) === normalizePresentationLabel(progress)),
+  }));
+  const extraProgress = orders.filter((order) => !progressRows.some(([, progress]) => normalizePresentationLabel(order.avanco) === normalizePresentationLabel(progress)));
+  if (extraProgress.length) {
+    const target = [...matchedProgress].reverse().find((group) => group.orders.length === 0) || matchedProgress[matchedProgress.length - 1];
+    setText(document, `B${target.row}`, 'OUTROS AVANÇOS');
+    target.orders.push(...extraProgress);
+  }
+  for (const group of matchedProgress) {
+    const values = metric(group.orders);
+    fill(group.row, values.planned, values.completed);
+  }
+  fill(46, orders.length, orders.filter((order) => order.status === 'executada').length);
+  return new XMLSerializer().serializeToString(document);
+}
+
+function originalValue(order: Order, header: string, period: PresentationPeriod): string | number {
+  const source = Object.entries(order.original || {}).find(([name]) => normalizePresentationLabel(name) === normalizePresentationLabel(header))?.[1] || '';
+  switch (header) {
+    case 'UTD': return presentationUtd(order);
+    case 'ALIMENTADOR': return order.alimentador;
+    case 'BARRAMENTO': return order.barramento;
+    case 'QTD. AJUSTADA': return adjustedQuantity(order);
+    case 'NUM_CONSEQUENCIA': return order.numConsequencia;
+    case 'STATUS': return order.status === 'executada' ? 'EXEC' : 'PEND';
+    case 'MÊS PROGRAMADO': return source || period.label.split(' ')[0].toUpperCase();
+    case 'EMPRESA': return order.empresa;
+    case 'EQUIPE': return order.equipe;
+    case 'SERVIÇO': return order.servico;
+    case 'AVANÇO': return order.avanco;
+    case 'RESPONSÁVEL': return order.responsavel;
+    default: return source;
+  }
+}
+
+function orderSheet(xml: string, orders: Order[], period: PresentationPeriod): string {
+  const header = xml.match(/<row r="1"[^>]*>[\s\S]*?<\/row>/)?.[0];
+  if (!header || !/<sheetData>/.test(xml)) throw new Error('Modelo de ordens inválido.');
+  const rows = orders.map((order, index) => {
+    const rowNumber = index + 2;
+    const cells = headers.map((headerName, column) => {
+      const address = `${String.fromCharCode(65 + column)}${rowNumber}`;
+      const value = originalValue(order, headerName, period);
+      if (typeof value === 'number' && Number.isFinite(value)) return `<c r="${address}" s="54" t="n"><v>${value}</v></c>`;
+      if (!value) return `<c r="${address}" s="54" t="n"/>`;
+      return `<c r="${address}" s="54" t="inlineStr"><is><t xml:space="preserve">${safeXml(String(value))}</t></is></c>`;
+    }).join('');
+    return `<row r="${rowNumber}" customFormat="1" s="63">${cells}</row>`;
+  });
+  const endRow = orders.length + 1;
+  return xml.replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${header}${rows.join('')}</sheetData>`)
+    .replace(/<dimension ref="[^"]+"/, `<dimension ref="A1:U${endRow}"`)
+    .replace(/<autoFilter ref="[^"]+"/, `<autoFilter ref="A1:U${endRow}"`);
 }
 
 export async function exportPresentationWorkbook(data: PresentationWorkbookData): Promise<void> {
-  const XLSX = await import('xlsx-js-style');
-  const workbook = XLSX.utils.book_new();
-  const generatedAt = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date());
-  const presentationRows: Array<Array<string | number>> = [
-    ['APRESENTAÇÃO · CONTROLE DA EXECUÇÃO'],
-    [`${data.company} · ${data.responsible}`],
-    [`Gerado em ${generatedAt} · ${data.operatorName}`],
-    [],
-    ['RESUMO DA CARTEIRA'],
-    ['Quantidade ajustada', 'Concluída', 'Pendente', '% do mês', 'Ordens'],
-    [data.planned, data.completed, Math.max(0, data.planned - data.completed), ratio(data.completed, data.planned), data.orders.length],
-    [],
-  ];
-  const sectionRows = [5];
-  const headerRows = [6];
-  const metricRows = [7];
-  const percentCells = ['D7'];
-
-  function appendGroups(title: string, groups: Group[]): void {
-    sectionRows.push(presentationRows.push([title]));
-    headerRows.push(presentationRows.push(['Categoria / UTD', 'Carteira', 'Concluída', 'Pendente', '% do mês']));
-    if (groups.length === 0) presentationRows.push(['Sem dados nesta seleção']);
-    else groups.forEach((group) => {
-      const row = presentationRows.push([
-        group.label,
-        group.planned,
-        group.completed,
-        Math.max(0, group.planned - group.completed),
-        ratio(group.completed, group.planned),
-      ]);
-      metricRows.push(row);
-      percentCells.push(`E${row}`);
-    });
-    presentationRows.push([]);
-  }
-
-  appendGroups('FRENTES DE SERVIÇO · QTD. AJUSTADA', data.fronts);
-  appendGroups('DEFEITOS POR AVANÇO · QTD. AJUSTADA', data.advances);
-  appendGroups(`VISÃO POR UTD · ${data.selectedFront.toUpperCase()}`, data.utds);
-
-  sectionRows.push(presentationRows.push(['ADERÊNCIA DA CARTEIRA · NÚMERO DE ORDENS']));
-  headerRows.push(presentationRows.push(['Ordens na carteira', 'Executadas', 'Pendentes', 'Aderência']));
-  const adherenceRow = presentationRows.push([
-    data.orders.length,
-    data.completedOrders,
-    data.orders.length - data.completedOrders,
-    ratio(data.completedOrders, data.orders.length),
-  ]);
-  metricRows.push(adherenceRow);
-  percentCells.push(`D${adherenceRow}`);
-  presentationRows.push([]);
-  const noteRow = presentationRows.push(['Concluída usa QTD. AJUSTADA das ordens executadas. A quantidade realmente realizada consta em ORDENS e no protocolo. Impedimentos continuam pendentes.']);
-
-  const presentation = XLSX.utils.aoa_to_sheet(presentationRows);
-  presentation['!cols'] = [{ wch: 39 }, { wch: 19 }, { wch: 19 }, { wch: 19 }, { wch: 18 }];
-  presentation['!rows'] = presentationRows.map((_, index) => ({ hpt: index === 0 ? 32 : sectionRows.includes(index + 1) ? 25 : headerRows.includes(index + 1) ? 30 : index + 1 === noteRow ? 37 : 21 }));
-  presentation['!merges'] = [1, 2, 3, noteRow, ...sectionRows].map((row) => ({ s: { r: row - 1, c: 0 }, e: { r: row - 1, c: 4 } }));
-  styleRow(presentation, 1, 0, 4, titleStyle);
-  for (const row of [2, 3, noteRow]) styleRow(presentation, row, 0, 4, noteStyle);
-  for (const row of sectionRows) styleRow(presentation, row, 0, 4, sectionStyle);
-  for (const row of headerRows) styleRow(presentation, row, 0, 4, headerStyle);
-  for (const row of metricRows) {
-    styleRow(presentation, row, 0, 4, row % 2 ? bodyStyle : alternateStyle);
-    for (let column = 1; column <= 4; column += 1) {
-      const cell = presentation[cellAddress(column, row)];
-      if (cell) cell.s = { ...numericStyle, ...(row % 2 === 0 ? { fill: { fgColor: { rgb: rowPale } } } : {}) };
-    }
-  }
-  for (const address of percentCells) {
-    const cell = presentation[address];
-    if (cell) cell.z = '0%';
-  }
-  XLSX.utils.book_append_sheet(workbook, presentation, 'APRESENTAÇÃO');
-
-  const columns = ['OS', 'UTD', 'EMPRESA', 'RESPONSÁVEL', 'EQUIPE', 'FRENTE', 'SERVIÇO', 'AVANÇO', 'ALIMENTADOR', 'BARRAMENTO', 'QTD. AJUSTADA', 'QTD. REALIZADA', 'SITUAÇÃO', 'ÚLTIMO REGISTRO', 'MOTIVO DO IMPEDIMENTO', 'OBSERVAÇÃO', 'PROTOCOLO', 'REGISTRADO POR', 'DATA DO REGISTRO'];
-  const orderRows: Array<Array<string | number>> = [
-    ['ORDENS DA CARTEIRA'],
-    [`${data.company} · ${data.responsible}`],
-    [`Gerado em ${generatedAt} · ${data.orders.length} ordens`],
-    columns,
-    ...data.orders.map(({ order, front, utd }) => [
-      order.numConsequencia, utd, order.empresa, order.responsavel, order.equipe, front,
-      order.servico, order.avanco, order.alimentador, order.barramento,
-      parseNumericQuantity(order.qtdAjustada) ?? order.qtdAjustada,
-      order.qtdExecutada ?? '', status(order), lastRegistration(order),
-      order.motivoImpedimento ?? '', order.observacao ?? '', order.protocolo ?? '',
-      order.registradoPor ?? '', order.dataRegistro ? new Date(order.dataRegistro).toLocaleString('pt-BR') : '',
-    ]),
-  ];
-  const orders = XLSX.utils.aoa_to_sheet(orderRows);
-  orders['!cols'] = [22, 19, 16, 24, 20, 20, 28, 23, 19, 19, 18, 18, 16, 21, 30, 42, 28, 24, 21].map((wch) => ({ wch }));
-  orders['!rows'] = orderRows.map((_, index) => ({ hpt: index === 0 ? 32 : index === 3 ? 32 : 22 }));
-  orders['!merges'] = [1, 2, 3].map((row) => ({ s: { r: row - 1, c: 0 }, e: { r: row - 1, c: columns.length - 1 } }));
-  orders['!autofilter'] = { ref: `A4:S${Math.max(orderRows.length, 4)}` };
-  styleRow(orders, 1, 0, columns.length - 1, titleStyle);
-  for (const row of [2, 3]) styleRow(orders, row, 0, columns.length - 1, noteStyle);
-  styleRow(orders, 4, 0, columns.length - 1, headerStyle);
-  for (let row = 5; row <= orderRows.length; row += 1) {
-    styleRow(orders, row, 0, columns.length - 1, row % 2 ? bodyStyle : alternateStyle);
-    const statusCell = orders[`M${row}`];
-    if (statusCell) statusCell.s = { ...bodyStyle, font: { name: 'Aptos', sz: 10, bold: true, color: { rgb: statusCell.v === 'Executada' ? green : navy } }, fill: { fgColor: { rgb: statusCell.v === 'Executada' ? 'E8F7ED' : bluePale } } };
-  }
-  XLSX.utils.book_append_sheet(workbook, orders, 'ORDENS');
-  XLSX.writeFile(workbook, `apresentacao-${slug(data.responsible)}-${new Date().toISOString().slice(0, 10)}.xlsx`, { bookType: 'xlsx', cellStyles: true });
+  const response = await fetch('/modelo-apresentacao.xlsx');
+  if (!response.ok) throw new Error('Modelo da apresentação indisponível.');
+  const template = unzipSync(new Uint8Array(await response.arrayBuffer()));
+  const presentationPath = 'xl/worksheets/sheet1.xml';
+  const ordersPath = 'xl/worksheets/sheet2.xml';
+  if (!template[presentationPath] || !template[ordersPath]) throw new Error('Modelo da apresentação incompleto.');
+  template[presentationPath] = encoder.encode(presentationSheet(decoder.decode(template[presentationPath]), data.orders, data.period));
+  template[ordersPath] = encoder.encode(orderSheet(decoder.decode(template[ordersPath]), data.orders, data.period));
+  const file = new Blob([zipSync(template, { level: 6 }) as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `apresentacao-${slug(data.responsible)}-${data.period.year}-${String(data.period.month).padStart(2, '0')}.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
