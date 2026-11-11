@@ -776,7 +776,7 @@ function FieldApp({
             <Detail label="Situação" value={statusText(reportedStatus(lastSaved))} />
             <Detail label="Data" value={formatDate(lastSaved.dataRegistro)} />
           </section>
-          <button className="button button-primary button-full" onClick={() => { setPage('lista'); setTab(lastSaved.status === 'pendente' ? 'pendentes' : 'executadas'); }}>Voltar às ordens</button>
+          <button className="button button-return button-full" onClick={() => { setPage('lista'); setTab(lastSaved.status === 'pendente' ? 'pendentes' : 'executadas'); }}>Voltar às ordens</button>
           <p className="small-note">Guarde o número para consulta e conferência posterior.</p>
         </div>
       </main>
