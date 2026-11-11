@@ -1166,6 +1166,7 @@ function AdminApp({
           <OrdersPage
             orders={filteredOrders}
             allOrders={orders}
+            deadlineExpired={deadlineExpired}
             query={search}
             setQuery={setSearch}
             teamFilter={teamFilter}
@@ -1242,7 +1243,7 @@ function Dashboard({
           <form className="search-field admin-search" onSubmit={(event) => { event.preventDefault(); setPage('ordens'); }}><span aria-hidden="true">⌕</span><input value={search} placeholder="Buscar e pressione Enter" onChange={(event) => setSearch(event.target.value)} /></form>
           <select aria-label="Filtrar equipe" onChange={(event) => { setTeamFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as equipes</option>{teamGroups.map((team) => <option key={team.key} value={team.key}>{team.label}</option>)}</select>
           <select aria-label="Filtrar serviço" onChange={(event) => { setServiceFilter(event.target.value); setPage('ordens'); }}><option value="">Todos os serviços</option>{[...new Set(orders.map((order) => order.servico).filter((service) => Boolean(service) && !isCancelOrderValue(service)))].map((service) => <option key={service}>{service}</option>)}</select>
-          <select aria-label="Filtrar situação" onChange={(event) => { setStatusFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as situações</option><option value="pendente">Pendente</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
+          <select aria-label="Filtrar situação" onChange={(event) => { setStatusFilter(event.target.value); setPage('ordens'); }}><option value="">Todas as situações</option><option value="pendente">{deadlineExpired ? 'Não executada no prazo' : 'Pendente'}</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
           <span className="period-chip compact-period">Carteira atual</span>
         </div>
         <OrderTable orders={orders.slice(0, 6)} />
@@ -1443,6 +1444,7 @@ function OrderTable({ orders }: { orders: Order[] }) {
 function OrdersPage({
   orders,
   allOrders,
+  deadlineExpired,
   query,
   setQuery,
   teamFilter,
@@ -1455,6 +1457,7 @@ function OrdersPage({
 }: {
   orders: Order[];
   allOrders: Order[];
+  deadlineExpired: boolean;
   query: string;
   setQuery: (value: string) => void;
   teamFilter: string;
@@ -1476,7 +1479,7 @@ function OrdersPage({
           <label className="search-field admin-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OS, equipe, responsável ou protocolo" /></label>
           <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team.key} value={team.key}>{team.label}</option>)}</select>
           <select value={serviceFilter} onChange={(event) => setServiceFilter(event.target.value)}><option value="">Todos os serviços</option>{services.map((service) => <option key={service}>{service}</option>)}</select>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todas as situações</option><option value="pendente">Pendente</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todas as situações</option><option value="pendente">{deadlineExpired ? 'Não executada no prazo' : 'Pendente'}</option><option value="executada">Executada</option><option value="impedimento">Impedimento</option></select>
         </div>
         <OrderTable orders={orders} />
       </section>
@@ -1608,8 +1611,8 @@ function ImportPage({
   }
 
   async function importRows() {
-    if (importMode === 'complementar' && deadlineExpired) {
-      setError(`O prazo desta carteira terminou em ${portfolioDeadlineLabel(activePeriod!)}. Importe a carteira do novo mês antes de acrescentar ordens.`);
+    if (importMode === 'complementar' && deadlineExpired && activePeriod) {
+      setError(`O prazo desta carteira terminou em ${portfolioDeadlineLabel(activePeriod)}. Importe a carteira do novo mês antes de acrescentar ordens.`);
       return;
     }
     if (duplicateHeaders.length) {
