@@ -14,7 +14,7 @@ A aplicação é online. Não existe fila de registros offline nem sincronizaç�
 | --- | --- | --- |
 | Interface | [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/docs/) e [Vite 6](https://vite.dev/guide/) | Telas, tipos, compilação e entrega da interface. |
 | Visualização | [Recharts](https://recharts.org/) e CSS responsivo | Gráficos da apresentação e layout para celular, tablet e computador. |
-| Exportação da apresentação | [pdf-lib](https://pdf-lib.js.org/) | Gera no navegador o PDF da carteira filtrada pelo perfil da equipe. |
+| Exportação da apresentação | [xlsx-js-style](https://github.com/gitbrent/xlsx-js-style) | Gera um Excel com a apresentação e somente as ordens visíveis para o acesso. |
 | Planilhas | [SheetJS](https://docs.sheetjs.com/) | Leitura de arquivos enviados e geração do arquivo Excel exportado. |
 | API | [Cloudflare Workers](https://developers.cloudflare.com/workers/) | Login, autorização, importação, gravação, consulta e arquivos da interface. |
 | Banco | [Cloudflare D1](https://developers.cloudflare.com/d1/) | Ordens, perfis, sessões, protocolos, fotos e revisões. |

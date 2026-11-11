@@ -1072,9 +1072,6 @@ function AdminApp({
     return textMatch && teamMatch && statusMatch && serviceMatch;
   }), [orders, search, teamFilter, statusFilter, serviceFilter]);
 
-  function exportCurrent() {
-    void exportControlWorkbook(filteredOrders, 'controle-execucao-neoenergia.xlsx');
-  }
   function exportPortfolio(): Promise<void> {
     const date = new Date().toISOString().slice(0, 10);
     return exportControlWorkbook(orders, `carteira-completa-neoenergia-${date}.xlsx`);
@@ -1134,13 +1131,13 @@ function AdminApp({
               {saveStatus === 'saving' ? 'Salvando…' : saveStatus === 'saved' ? 'Salvo no servidor' : saveStatus === 'error' ? 'Falha ao salvar' : 'Conectado'}
             </span>
             {saveStatus === 'error' && <button className="text-button" onClick={onRetrySave}>Tentar novamente</button>}
-            <button className="button button-export export-button" onClick={() => { void exportPortfolio(); }}>Exportar carteira</button>
+            {page !== 'apresentacao' && <button className="button button-export export-button" onClick={() => { void exportPortfolio(); }}>Exportar carteira</button>}
           </div>
         </header>
 
         {page === 'painel' && <Dashboard orders={orders} search={search} setSearch={setSearch} setTeamFilter={setTeamFilter} setStatusFilter={setStatusFilter} setServiceFilter={setServiceFilter} setPage={setPage} />}
         {page === 'controle' && <ControlPage orders={orders} />}
-        {page === 'apresentacao' && <main className="admin-content"><Suspense fallback={<div className="presentation-empty">Carregando apresentação…</div>}><Presentation orders={orders} /></Suspense></main>}
+        {page === 'apresentacao' && <main className="admin-content"><Suspense fallback={<div className="presentation-empty">Carregando apresentação…</div>}><Presentation orders={orders} exportContext={{ company: 'Neoenergia e Vencer', responsible: 'Carteira geral', operatorName: 'Supervisão' }} /></Suspense></main>}
         {page === 'ordens' && (
           <OrdersPage
             orders={filteredOrders}
@@ -1154,7 +1151,6 @@ function AdminApp({
             serviceFilter={serviceFilter}
             setServiceFilter={setServiceFilter}
             onClearFilters={() => { setSearch(''); setTeamFilter(''); setStatusFilter(''); setServiceFilter(''); }}
-            onExport={exportCurrent}
           />
         )}
         {page === 'importacao' && <ImportPage orders={orders} setOrders={setOrders} imports={imports} setImports={setImports} onExportPortfolio={exportPortfolioForReplacement} onClearPortfolio={onClearPortfolio} onImportSupplemental={onImportSupplemental} saveStatus={saveStatus} />}
@@ -1424,7 +1420,6 @@ function OrdersPage({
   serviceFilter,
   setServiceFilter,
   onClearFilters,
-  onExport,
 }: {
   orders: Order[];
   allOrders: Order[];
@@ -1437,7 +1432,6 @@ function OrdersPage({
   serviceFilter: string;
   setServiceFilter: (value: string) => void;
   onClearFilters: () => void;
-  onExport: () => void;
 }) {
   const teams = activeTeamBreakdown(allOrders);
   const services = [...new Set(allOrders.map((order) => order.servico).filter((service) => Boolean(service) && !isCancelOrderValue(service)))];
@@ -1445,7 +1439,7 @@ function OrdersPage({
   return (
     <main className="admin-content">
       <section className="panel orders-panel">
-        <div className="panel-heading"><div><h2>Ordens da carteira</h2><p className="muted">{orders.length.toLocaleString('pt-BR')} registros na seleção atual</p></div><div className="orders-heading-actions">{hasFilters && <button className="text-button" onClick={onClearFilters}>Limpar filtros</button>}<button className="button button-export" onClick={onExport}>Exportar seleção</button></div></div>
+        <div className="panel-heading"><div><h2>Ordens da carteira</h2><p className="muted">{orders.length.toLocaleString('pt-BR')} registros na seleção atual</p></div>{hasFilters && <div className="orders-heading-actions"><button className="text-button" onClick={onClearFilters}>Limpar filtros</button></div>}</div>
         <div className="filter-row orders-filter-row">
           <label className="search-field admin-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar OS, equipe, responsável ou protocolo" /></label>
           <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}><option value="">Todas as equipes</option>{teams.map((team) => <option key={team.key} value={team.key}>{team.label}</option>)}</select>

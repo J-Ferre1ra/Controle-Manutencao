@@ -97,33 +97,33 @@ export function Presentation({ orders, compact = false, exportContext }: { order
     setExporting(true);
     setExportError('');
     try {
-      const { exportPresentationPdf } = await import('./lib/export-presentation-pdf');
-      await exportPresentationPdf({
+      const { exportPresentationWorkbook } = await import('./lib/export-presentation-workbook');
+      await exportPresentationWorkbook({
         ...exportContext,
         planned: total,
         completed,
-        orderCount: orders.length,
         completedOrders,
         fronts: frontGroups,
         advances: progressGroups,
         utds: byUtd,
         selectedFront,
+        orders: orders.map((order) => ({ order, front: frontOf(order), utd: utdOf(order) })),
       });
     } catch {
-      setExportError('Não foi possível gerar o PDF. Tente novamente.');
+      setExportError('Não foi possível gerar a apresentação. Tente novamente.');
     } finally {
       setExporting(false);
     }
   }
 
   return <div className={compact ? 'presentation presentation-compact' : 'presentation'}>
-    <div className="presentation-intro"><div><h2>{compact ? 'Sua carteira em números' : 'Apresentação da carteira'}</h2><p>Quantidade ajustada da carteira atual, atualizada conforme as ordens são registradas.</p></div><div className="presentation-actions"><span className="presentation-live"><i />Dados atuais</span>{exportContext && orders.length > 0 && <button type="button" className="button button-export presentation-export" onClick={() => { void downloadPresentation(); }} disabled={exporting}>{exporting ? 'Gerando PDF…' : 'Exportar PDF'}</button>}</div></div>
+    <div className="presentation-intro"><div><h2>{compact ? 'Sua carteira em números' : 'Apresentação da carteira'}</h2><p>Quantidade ajustada da carteira atual, atualizada conforme as ordens são registradas.</p></div><div className="presentation-actions"><span className="presentation-live"><i />Dados atuais</span>{exportContext && orders.length > 0 && <button type="button" className="button button-export presentation-export" onClick={() => { void downloadPresentation(); }} disabled={exporting}>{exporting ? 'Gerando Excel…' : 'Exportar apresentação'}</button>}</div></div>
     {exportError && <div className="inline-error" role="alert">{exportError}</div>}
     {orders.length === 0 ? <div className="presentation-empty">Nenhuma ordem vinculada a este acesso nesta carteira.</div> : <>
       <section className="presentation-summary" aria-label="Resumo da quantidade ajustada">
         <div><span>Quantidade ajustada</span><strong>{number.format(total)}</strong><small>prevista na carteira</small></div>
         <div><span>Quantidade executada</span><strong>{number.format(completed)}</strong><small>ajustada nas ordens concluídas</small></div>
-        <div><span>Quantidade pendente</span><strong>{number.format(Math.max(0, total - completed))}</strong><small>{percent}% da quantidade concluída</small></div>
+        <div><span>Quantidade pendente</span><strong>{number.format(Math.max(0, total - completed))}</strong><small>{percent}% do mês concluído</small></div>
       </section>
       <section className="presentation-panel"><div className="presentation-panel-heading"><div><h3>Frentes de serviço</h3><p>Quantidade ajustada por tipo de trabalho</p></div><span className="presentation-key"><i /> Executada <i /> Pendente</span></div><Chart groups={frontGroups} title="Quantidade ajustada executada e pendente por frente de serviço" /></section>
       <section className="presentation-panel"><div className="presentation-panel-heading"><div><h3>Defeitos por avanço</h3><p>Distribuição da quantidade ajustada da coluna AVANÇO</p></div></div><Chart groups={progressGroups} title="Quantidade ajustada executada e pendente por avanço" /></section>

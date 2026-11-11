@@ -25,7 +25,7 @@ A importação não modifica o arquivo original. A exportação cria um novo arq
 | --- | --- |
 | Interface | React 19, TypeScript, Vite e CSS responsivo |
 | Gráficos | Recharts |
-| Exportação da apresentação | pdf-lib |
+| Exportação da apresentação | xlsx-js-style |
 | Leitura e exportação de planilhas | SheetJS (xlsx) |
 | API e arquivos publicados | Cloudflare Workers e Workers Assets |
 | Dados | Cloudflare D1 |

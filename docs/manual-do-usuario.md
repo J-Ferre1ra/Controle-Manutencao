@@ -56,7 +56,7 @@ O impedimento fica no histórico para conferência do supervisor, com motivo, ob
 
 ### Acompanhar a carteira
 
-A terceira aba, **Apresentação**, reúne a quantidade ajustada por frente de serviço, por **AVANÇO** e por UTD. Selecione uma frente em **Visão por UTD** para detalhá-la. A seção **Aderência da carteira** mostra quantas ordens foram concluídas. Use **Exportar PDF** para baixar a apresentação da sua carteira com os totais e a frente selecionada.
+A terceira aba, **Apresentação**, reúne a quantidade ajustada por frente de serviço, por **AVANÇO** e por UTD. Selecione uma frente em **Visão por UTD** para detalhá-la. A seção **Aderência da carteira** mostra quantas ordens foram concluídas. O percentual exibido é o avanço do mês inteiro (concluído dividido pela carteira), não o MTD% de uma meta até a data atual. Use **Exportar apresentação** para baixar um Excel com as abas **APRESENTAÇÃO** e **ORDENS**, limitado às ordens do seu acesso.
 
 Ao receber um aviso de registro feito por outra equipe da mesma empresa, a tela consulta os dados atualizados. O aviso mostra quem registrou e pode ser fechado. A lista de ordens continua limitada ao perfil de acesso.
 
@@ -113,7 +113,7 @@ Para alterar um perfil, localize-o pela busca ou pelos filtros e clique em **Edi
 
 Em **Protocolos**, consulte a tabela de registros e confira número da ordem, protocolo, operador, resultado, data, observação e evidência. **Abrir foto** mostra a imagem de um impedimento quando houver. Use **Atualizar** para consultar registros recentes e **Carregar mais registros** para ver páginas anteriores.
 
-**Exportar carteira**, no topo da administração, baixa a carteira completa. **Exportar seleção**, em **Ordens**, baixa apenas as linhas após os filtros. A exportação inclui campos de execução e auditoria e preserva os dados das colunas de origem; ela não reproduz exatamente as fórmulas, cores e mesclagens do arquivo enviado.
+**Exportar carteira**, no topo das páginas administrativas, baixa a carteira completa. Na página **Apresentação**, use **Exportar apresentação** para baixar apenas o resumo e as ordens da carteira. A exportação da carteira inclui campos de execução e auditoria e preserva os dados das colunas de origem; ela não reproduz exatamente as fórmulas, cores e mesclagens do arquivo enviado.
 
 ## Salvamento e atualização das telas
 
