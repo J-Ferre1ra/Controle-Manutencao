@@ -4,6 +4,7 @@ import { apiRequest, readSharedState } from './data/api';
 import type { SharedAppState, SyncCursor } from './data/api';
 import { exportControlWorkbook, headersFromSheet, mapSpreadsheetRow, readWorkbook, rowsFromSheet } from './lib/excel';
 import type { ParsedWorkbook } from './lib/excel';
+import { presentationPeriod } from './lib/presentation-data.js';
 import { parseNumericQuantity } from './lib/quantity.js';
 import type { AccessProfile, AdminPage, ExecutionNotification, ImportRecord, Order, OrderStatus, ProfileKind, SessionProfile } from './types';
 
@@ -109,7 +110,7 @@ function parseQuantity(value: string): number {
 }
 
 type AdminSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
-type SupplementalImportInput = { fileName: string; sheetName: string; sourceColumns: string[]; orders: Omit<Order, 'id' | 'status'>[] };
+type SupplementalImportInput = { fileName: string; sheetName: string; sourceColumns: string[]; referenceMonth: string; orders: Omit<Order, 'id' | 'status'>[] };
 type SupplementalImportResult = { addedCount: number; duplicateCount: number; excludedCount: number; importRecord: ImportRecord; orders: Order[] };
 type PortfolioExportSnapshot = { sync: SyncCursor; orderCount: number };
 
@@ -1474,6 +1475,10 @@ function ImportPage({
   const [file, setFile] = useState<ParsedWorkbook | null>(null);
   const [sheetName, setSheetName] = useState('');
   const [importMode, setImportMode] = useState<'substituir' | 'complementar'>('substituir');
+  const [referenceMonth, setReferenceMonth] = useState('');
+  const [referenceYear, setReferenceYear] = useState(() => new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Recife', year: 'numeric',
+  }).format(new Date()));
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [auditSnapshot, setAuditSnapshot] = useState<PortfolioExportSnapshot | null>(null);
@@ -1585,19 +1590,26 @@ function ImportPage({
     }
 
     if (importMode === 'complementar') {
+      if (orders.length === 0) {
+        setError('Importe primeiro a carteira do mês para acrescentar ordens.');
+        return;
+      }
       setImporting(true);
       setError('');
       setMessage('');
+      const activePeriod = presentationPeriod(orders);
+      const activeReferenceMonth = `${activePeriod.year}-${String(activePeriod.month).padStart(2, '0')}`;
       const additions = orderRows.filter((mapped) => !isCancellationOrder(mapped)).map((mapped) => ({
         ...mapped,
         qtdExecutada: undefined,
         sourceColumns: columns,
         sourceSheet: sheetName,
         sourceFile: file.fileName,
+        referenceMonth: activeReferenceMonth,
         sourceKind: canonicalCompany(mapped.empresa) === 'vencer' ? 'vencer' as const : 'controle' as const,
       }));
       try {
-        const result = await onImportSupplemental({ fileName: file.fileName, sheetName, sourceColumns: columns, orders: additions });
+        const result = await onImportSupplemental({ fileName: file.fileName, sheetName, sourceColumns: columns, referenceMonth: activeReferenceMonth, orders: additions });
         setMessage(`${result.addedCount.toLocaleString('pt-BR')} nova(s) ordem(ns) acrescentada(s) à carteira.${result.duplicateCount ? ` ${result.duplicateCount} já existia(m) e não foi(ram) duplicada(s).` : ''}${result.excludedCount ? ` ${result.excludedCount} linha(s) incompleta(s) ou inválida(s) foram ignoradas.` : ''}${cancellationRows.length ? ` ${cancellationRows.length} linha(s) “CANCELAR ORDEM” foram desconsideradas.` : ''}`);
         setFile(null);
         setSheetName('');
@@ -1619,6 +1631,13 @@ function ImportPage({
         : 'Exporte a carteira completa e exclua a carteira atual antes de importar a próxima.');
       return;
     }
+    const year = Number(referenceYear);
+    const month = Number(referenceMonth);
+    if (!/^20\d{2}$/.test(referenceYear) || !Number.isInteger(month) || month < 1 || month > 12) {
+      setError('Informe o mês e o ano da nova carteira antes de importar.');
+      return;
+    }
+    const selectedReferenceMonth = `${year}-${String(month).padStart(2, '0')}`;
 
     const orderKey = (order: Pick<Order, 'numConsequencia' | 'empresa' | 'responsavel'>) =>
       [normalize(order.numConsequencia), canonicalCompany(order.empresa), normalize(order.responsavel)].join('|');
@@ -1647,6 +1666,7 @@ function ImportPage({
         sourceColumns: columns,
         sourceSheet: sheetName,
         sourceFile: file.fileName,
+        referenceMonth: selectedReferenceMonth,
         sourceKind: 'controle',
       };
     });
@@ -1659,11 +1679,14 @@ function ImportPage({
       importedAt,
       orderCount: nextOrders.length,
       sheetName,
+      referenceMonth: selectedReferenceMonth,
     };
     setImports([record, ...imports.filter((item) => !item.id.startsWith('import-demo'))]);
     setAuditSnapshot(null);
     setPortfolioDeleted(false);
-    setMessage(`${nextOrders.length.toLocaleString('pt-BR')} ordens importadas da carteira geral.${excludedIncompleteRows ? ` ${excludedIncompleteRows} linha(s) com EMPRESA, EQUIPE ou RESPONSÁVEL vazios foram ignoradas.` : ''}${cancellationRows.length ? ` ${cancellationRows.length} linha(s) “CANCELAR ORDEM” foram desconsideradas.` : ''}`);
+    const periodLabel = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+      .format(new Date(Date.UTC(year, month - 1, 1)));
+    setMessage(`${nextOrders.length.toLocaleString('pt-BR')} ordens importadas para ${periodLabel}.${excludedIncompleteRows ? ` ${excludedIncompleteRows} linha(s) com EMPRESA, EQUIPE ou RESPONSÁVEL vazios foram ignoradas.` : ''}${cancellationRows.length ? ` ${cancellationRows.length} linha(s) “CANCELAR ORDEM” foram desconsideradas.` : ''}`);
     setError('');
   }
 
@@ -1678,7 +1701,18 @@ function ImportPage({
           </div>
           {importMode === 'substituir' && orders.length > 0 && <div className="security-note"><strong>Troca mensal da carteira</strong><span>1. Exporte e guarde a carteira atual para auditoria. 2. O botão de exclusão será liberado. 3. Exclua a carteira atual e importe a planilha do novo mês.</span><div className="portfolio-action-row"><button type="button" className="button button-export" disabled={exporting || saveStatus === 'saving' || saveStatus === 'error'} onClick={() => { void exportCurrentPortfolio(); }}>{exporting ? 'Exportando…' : 'Exportar carteira completa'}</button><button type="button" className="button button-danger" disabled={!auditSnapshot || deletingPortfolio || saveStatus === 'saving' || saveStatus === 'error'} onClick={() => { void deleteCurrentPortfolio(); }}>{deletingPortfolio ? 'Excluindo…' : 'Excluir carteira deste mês'}</button></div>{auditSnapshot && <span className="success-text">Exportação concluída: {auditSnapshot.orderCount.toLocaleString('pt-BR')} ordens. Exclusão liberada.</span>}</div>}
           {importMode === 'substituir' && orders.length === 0 && portfolioDeleted && <div className="mapping-note"><strong>Carteira anterior excluída</strong><span>Selecione a planilha geral do novo mês e confirme a importação para disponibilizar as ordens às equipes.</span></div>}
-          {importMode === 'complementar' && <div className="mapping-note"><strong>Importação complementar</strong><span>As novas ordens serão acrescentadas à carteira atual. As ordens existentes e seus registros serão preservados; números já cadastrados não serão duplicados.</span></div>}
+          {importMode === 'substituir' && <div className="portfolio-period-form">
+            <div><strong>Mês de referência da nova carteira</strong><p>Informe o período da carteira. Ele será usado na apresentação e nas ordens acrescentadas depois.</p></div>
+            <div className="portfolio-period-fields">
+              <label className="field-group" htmlFor="portfolio-month">Mês<select id="portfolio-month" value={referenceMonth} onChange={(event) => { setReferenceMonth(event.target.value); setError(''); }}>
+                <option value="">Selecione o mês</option>
+                {['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+                  .map((name, index) => <option value={String(index + 1)} key={name}>{name}</option>)}
+              </select></label>
+              <label className="field-group" htmlFor="portfolio-year">Ano<input id="portfolio-year" type="number" inputMode="numeric" min="2000" max="2099" step="1" value={referenceYear} onChange={(event) => { setReferenceYear(event.target.value); setError(''); }} /></label>
+            </div>
+          </div>}
+          {importMode === 'complementar' && <div className="mapping-note"><strong>Importação complementar{orders.length ? ` · ${presentationPeriod(orders).label}` : ''}</strong><span>As novas ordens serão acrescentadas à carteira atual e herdarão seu mês de referência. As ordens existentes e seus registros serão preservados; números já cadastrados não serão duplicados.</span></div>}
           <label className="upload-dropzone">
             <span className="file-icon">XLSX</span>
             <span><strong>{importMode === 'complementar' ? 'Selecione a planilha com as novas ordens' : 'Selecione a carteira geral do mês'}</strong><small>As abas de apresentação e resumo não serão importadas.</small></span>
@@ -1713,7 +1747,7 @@ function ImportPage({
           <div className="import-history-list">
             {imports.slice(0, 4).map((item) => (
               <article className="import-history-item" key={item.id}>
-                <strong>{item.source}</strong><span>{item.fileName}</span><div><small>{formatDate(item.importedAt)}</small><small className="success-text">{item.orderCount} adicionada(s)</small></div>
+                <strong>{item.source}{item.referenceMonth ? ` · ${item.referenceMonth.slice(5)}/${item.referenceMonth.slice(0, 4)}` : ''}</strong><span>{item.fileName}</span><div><small>{formatDate(item.importedAt)}</small><small className="success-text">{item.orderCount} adicionada(s)</small></div>
                 {Boolean(item.duplicateCount || item.excludedCount) && <small>{item.duplicateCount || 0} duplicada(s) · {item.excludedCount || 0} incompleta(s) ignorada(s)</small>}
               </article>
             ))}

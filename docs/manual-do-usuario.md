@@ -74,7 +74,7 @@ Ao receber um aviso de registro feito por outra equipe da mesma empresa, a tela 
 
 ### Importar a primeira carteira do mês
 
-1. Abra **Importar planilhas > Nova carteira do mês** e selecione o arquivo de ordens.
+1. Abra **Importar planilhas > Nova carteira do mês**, informe o **mês e o ano de referência** e selecione o arquivo de ordens. O nome do arquivo não determina o período.
 2. Confira a aba reconhecida, a quantidade de linhas aceitas, as linhas ignoradas e as primeiras ordens na **Conferência antes de importar**. A prévia não grava dados.
 3. Corrija o arquivo se houver cabeçalhos repetidos ou campos obrigatórios ausentes.
 4. Clique em **Importar carteira do novo mês** e aguarde **Salvo no servidor**.
@@ -84,7 +84,7 @@ A planilha deve ter número da ordem, **EMPRESA**, **EQUIPE** e **RESPONSÁVEL**
 
 ### Acrescentar ordens durante o mês
 
-Em **Importar planilhas**, escolha **Acrescentar ordens**, selecione a nova planilha e confira a prévia. Cada nova linha precisa ter número da ordem, empresa, equipe, responsável, serviço e quantidade ajustada maior que zero. Clique em **Acrescentar à carteira atual**. O sistema informa quantas ordens entraram e quantas foram ignoradas ou reconhecidas como duplicadas.
+Em **Importar planilhas**, escolha **Acrescentar ordens**, selecione a nova planilha e confira a prévia. Cada nova linha precisa ter número da ordem, empresa, equipe, responsável, serviço e quantidade ajustada maior que zero. Clique em **Acrescentar à carteira atual**. As novas ordens herdam o mês e o ano da carteira ativa. O sistema informa quantas ordens entraram e quantas foram ignoradas ou reconhecidas como duplicadas.
 
 As ordens existentes e seus registros são preservados. Para identificar uma duplicata nessa importação, o sistema compara **número da ordem + empresa + responsável**.
 
@@ -93,7 +93,7 @@ As ordens existentes e seus registros são preservados. Para identificar uma dup
 1. Em **Importar planilhas > Nova carteira do mês**, use **Exportar carteira completa**.
 2. Confira se o arquivo foi baixado e guarde-o para consulta e auditoria.
 3. Após a exportação, use **Excluir carteira deste mês** e confirme a operação.
-4. Importe a planilha do novo mês e aguarde **Salvo no servidor**.
+4. Informe o mês e o ano de referência, importe a planilha do novo mês e aguarde **Salvo no servidor**.
 5. Confira as ordens e revise os responsáveis dos perfis de acesso.
 
 A exclusão remove a carteira ativa, mas mantém os perfis e o histórico de protocolos. Se outra pessoa alterar a carteira após a exportação, o servidor pode exigir uma nova exportação antes de permitir a exclusão. O arquivo exportado é necessário para consultar a carteira antiga fora da tela de ordens atuais.

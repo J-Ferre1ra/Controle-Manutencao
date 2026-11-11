@@ -419,6 +419,11 @@ h1, h2, h3, p { margin-top: 0; }
 .success-text { color: var(--success); }
 .mapping-note, .security-note { display: grid; gap: 5px; margin-top: 15px; padding: 12px; border: 1px solid #d7e8ec; border-radius: 7px; color: #58727d; background: #f5fafb; font-size: 15px; line-height: 1.5; }
 .mapping-note strong, .security-note strong { color: #315564; font-size: 15px; }
+.portfolio-period-form { display: grid; gap: 12px; margin: 15px 0; padding: 14px; border: 1px solid #d7e8ec; border-radius: 8px; background: #f8fbfc; }
+.portfolio-period-form strong { color: var(--navy); font-size: 16px; }
+.portfolio-period-form p { margin: 4px 0 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
+.portfolio-period-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .55fr); gap: 12px; max-width: 460px; }
+.portfolio-period-fields .field-group { min-width: 0; }
 .preview-table { min-width: 580px; }
 .access-panel .panel-heading { align-items: flex-start; }
 .security-note { margin: -2px 0 16px; padding: 11px 13px; }
@@ -601,6 +606,7 @@ h1, h2, h3, p { margin-top: 0; }
   .status-legend { gap: 9px; }
   .quantity-chart-meta { align-items: flex-start; flex-direction: column; gap: 3px; }
   .import-layout { gap: 12px; }
+  .portfolio-period-fields { grid-template-columns: 1fr; }
   .upload-dropzone { min-height: 82px; padding: 10px; }
   .upload-dropzone > span:nth-child(2) { gap: 4px; }
   .upload-dropzone strong { font-size: 15px; }

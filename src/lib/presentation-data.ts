@@ -96,14 +96,22 @@ function countBusinessDays(year: number, month: number, lastDay: number): number
 
 export function presentationPeriod(orders: Order[], now = new Date()): PresentationPeriod {
   const today = recifeDate(now);
-  const counts = new Map<string, number>();
+  const explicitCounts = new Map<string, number>();
+  const legacyCounts = new Map<string, number>();
   for (const order of orders) {
+    const referenceMonth = order.referenceMonth;
+    if (referenceMonth && /^20\d{2}-(0[1-9]|1[0-2])$/.test(referenceMonth)) {
+      explicitCounts.set(referenceMonth, (explicitCounts.get(referenceMonth) || 0) + 1);
+      continue;
+    }
+    // Carteiras anteriores ao campo de período ainda precisam manter seu MTD original.
     const month = monthFromFile(order.sourceFile);
     if (month) {
       const key = `${month.year}-${month.month}`;
-      counts.set(key, (counts.get(key) || 0) + 1);
+      legacyCounts.set(key, (legacyCounts.get(key) || 0) + 1);
     }
   }
+  const counts = explicitCounts.size ? explicitCounts : legacyCounts;
   const selected = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
   const [year, month] = selected ? selected.split('-').map(Number) : [today.year, today.month];
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();

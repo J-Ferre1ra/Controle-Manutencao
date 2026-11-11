@@ -490,6 +490,19 @@ async function addSupplementalOrders(request, env) {
   const incoming = Array.isArray(body.orders) ? body.orders : [];
   if (incoming.length === 0) return json({ error: 'A planilha não contém ordens para adicionar.' }, 400);
   if (incoming.length > 3000) return json({ error: 'A planilha complementar deve conter no máximo 3.000 ordens por envio.' }, 413);
+  const referenceMonth = String(body.referenceMonth || '').trim();
+  if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(referenceMonth)) {
+    return json({ error: 'O mês e o ano da carteira atual são necessários para acrescentar ordens. Atualize a página e tente novamente.' }, 400);
+  }
+
+  const existingRows = await env.DB.prepare('SELECT payload_json FROM work_orders').all();
+  if (existingRows.results.length === 0) return json({ error: 'Importe primeiro a carteira do mês para acrescentar ordens.' }, 409);
+  const existingOrders = existingRows.results.map((row) => JSON.parse(row.payload_json));
+  const activeMonths = new Set(existingOrders.map((order) => order.referenceMonth)
+    .filter((month) => typeof month === 'string' && /^20\d{2}-(0[1-9]|1[0-2])$/.test(month)));
+  if (activeMonths.size > 1 || (activeMonths.size === 1 && !activeMonths.has(referenceMonth))) {
+    return json({ error: 'O mês da carteira mudou. Atualize a página antes de acrescentar ordens.' }, 409);
+  }
 
   const text = (value, limit) => String(value ?? '').trim().slice(0, limit);
   const fileName = text(body.fileName, 240) || 'Planilha complementar';
@@ -535,14 +548,14 @@ async function addSupplementalOrders(request, env) {
       sourceColumns,
       sourceSheet: sheetName,
       sourceFile: fileName,
+      referenceMonth,
       sourceKind: empresa === 'Vencer' ? 'vencer' : 'controle',
     });
   }
   if (rows.length === 0) return json({ error: 'Não encontrei ordens completas. Cada linha precisa ter número, empresa, equipe, responsável, serviço e quantidade ajustada maior que zero.' }, 400);
 
-  const existingRows = await env.DB.prepare('SELECT payload_json FROM work_orders').all();
   const orderKey = (order) => [normalize(order.numConsequencia), canonicalCompany(order.empresa), normalize(order.responsavel)].join('|');
-  const seen = new Set(existingRows.results.map((row) => orderKey(JSON.parse(row.payload_json))));
+  const seen = new Set(existingOrders.map(orderKey));
   const additions = [];
   let duplicateCount = 0;
   for (const order of rows) {
@@ -577,6 +590,7 @@ async function addSupplementalOrders(request, env) {
     duplicateCount,
     excludedCount,
     sheetName,
+    referenceMonth,
   };
   await env.DB.prepare('INSERT INTO imports(id, imported_at, payload_json) VALUES (?1, ?2, ?3)')
     .bind(importRecord.id, now, JSON.stringify(importRecord)).run();

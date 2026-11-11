@@ -39,6 +39,7 @@ export interface Order {
   sourceColumns?: string[];
   sourceSheet?: string;
   sourceFile?: string;
+  referenceMonth?: string;
   sourceKind?: 'controle' | 'inspecao' | 'nper' | 'vencer';
 }
 
@@ -52,6 +53,7 @@ export interface ImportRecord {
   duplicateCount?: number;
   excludedCount?: number;
   sheetName?: string;
+  referenceMonth?: string;
 }
 
 export interface ExecutionNotification {
