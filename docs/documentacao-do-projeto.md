@@ -1,166 +1,258 @@
-# Documentação técnica e de operação
+<div class="doc-cover technical-cover">
+  <span class="cover-kicker">CONTROLE DE EXECUÇÃO DE ORDENS</span>
+  <h1>Documentação do sistema</h1>
+  <p>Produto, arquitetura, regras operacionais, segurança e guia de manutenção.</p>
+  <span class="cover-meta">Edição de novembro de 2026 · versão 1.0</span>
+  <span class="cover-meta">Idealização e desenvolvimento: João Henrique Ferreira</span>
+</div>
 
-Esta documentação descreve a versão atual do Controle de Execução de Ordens. O [manual de uso](manual-do-usuario.md) explica as tarefas de quem trabalha nas telas; este arquivo explica as regras, os componentes e a manutenção do software.
+# Neste documento
 
-## Objetivo e limites do produto
+- [1. Visão do produto](#1-visão-do-produto)
+- [2. Tecnologias e responsabilidades](#2-tecnologias-e-responsabilidades)
+- [3. Arquitetura](#3-arquitetura)
+- [4. Identidade, escopo e dados](#4-identidade-escopo-e-dados)
+- [5. Regras de estado e fluxo](#5-regras-de-estado-e-fluxo)
+- [6. Indicadores e apresentação](#6-indicadores-e-apresentação)
+- [7. Sincronização, consumo e incidentes](#7-sincronização-e-consumo-do-banco)
+- [8. API principal](#8-api-principal)
+- [9. Segurança e privacidade](#9-segurança-e-privacidade)
+- [10. Desenvolvimento local](#10-desenvolvimento-local)
+- [11. Publicação e operação](#11-publicação-e-operação)
 
-A aplicação reúne em uma carteira ativa as ordens da planilha mensal. O supervisor importa e acompanha essa carteira, cadastra acessos e consulta protocolos. Cada perfil de equipe consulta as ordens autorizadas e registra execução ou impedimento. A exportação gera um novo arquivo de acompanhamento; a planilha original não é editada pelo sistema.
+<div class="page-break"></div>
 
-A aplicação é online. Não existe fila de registros offline nem sincronização posterior garantida. Uma execução só deve ser considerada salva quando o servidor devolver o protocolo.
+# 1. Visão do produto
 
-## Tecnologias
+**Idealização e desenvolvimento:** João Henrique Ferreira.
 
-| Camada | Ferramentas | Uso no projeto |
+O Controle de Execução de Ordens centraliza a carteira mensal que antes era distribuída em planilhas. O supervisor importa a carteira e administra os acessos. Cada perfil de equipe vê as ordens autorizadas e registra uma execução ou uma tentativa impedida. O sistema guarda o protocolo e mantém um histórico para conferência.
+
+O sistema está publicado na Cloudflare e funciona em navegador de celular, tablet ou computador. A aplicação requer internet para consultar e registrar dados. Não há modo offline nem envio posterior de registros guardados no aparelho.
+
+## Objetivos operacionais
+
+- Reunir as ordens da carteira ativa em um único ponto de consulta.
+- Vincular a visualização da equipe à empresa e ao responsável cadastrados.
+- Registrar execuções e impedimentos com pessoa, horário e protocolo.
+- Manter impedimentos pendentes para nova tentativa e facilitar a conferência pela supervisão.
+- Importar ordens complementares sem substituir a carteira inteira.
+- Exportar a carteira de auditoria ou a apresentação em planilha, conforme a finalidade.
+
+O software não edita o arquivo de origem, não substitui o processo de programação das ordens e não valida tecnicamente se um serviço foi executado no campo. A pessoa que registra declara o resultado, e a supervisão pode conferir as informações.
+
+# 2. Tecnologias e responsabilidades
+
+| Camada | Tecnologia | Responsabilidade |
 | --- | --- | --- |
-| Interface | [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/docs/) e [Vite 6](https://vite.dev/guide/) | Telas, tipos, compilação e entrega da interface. |
-| Visualização | React e CSS responsivo | Tabelas da apresentação e layout para celular, tablet e computador. |
-| Exportação da apresentação | Modelo Excel original e [fflate](https://github.com/101arrowz/fflate) | Preenche as abas originais **APRESENTAÇÃO** e **ACOMPANHAMENTO**, preservando estilos, mesclagens, colunas e regras de cor. |
-| Planilhas | [SheetJS](https://docs.sheetjs.com/) | Leitura de arquivos enviados e geração do arquivo Excel exportado. |
-| API | [Cloudflare Workers](https://developers.cloudflare.com/workers/) | Login, autorização, importação, gravação, consulta e arquivos da interface. |
-| Banco | [Cloudflare D1](https://developers.cloudflare.com/d1/) | Ordens, perfis, sessões, protocolos, fotos e revisões. |
-| Atualização entre aparelhos | [Durable Objects](https://developers.cloudflare.com/durable-objects/) e WebSocket | Aviso de mudança; cada cliente busca seus dados pela API autenticada. |
-| Operação | [Wrangler](https://developers.cloudflare.com/workers/wrangler/) e Workers Builds | Desenvolvimento local, migrações, build e publicação. |
+| Interface | React 19, TypeScript e CSS responsivo | Telas de equipe e supervisão, validação de formulários e apresentação dos dados. |
+| Servidor e API | Cloudflare Workers | Autenticar sessões, autorizar operações, validar importações, executar regras de negócio e servir os arquivos da interface. |
+| Banco relacional | Cloudflare D1 (SQLite) | Persistir ordens, perfis, sessões, protocolos, fotos, importações e revisões de sincronização. |
+| Avisos em tempo real | Durable Objects e WebSocket | Avisar clientes conectados de que os dados mudaram, para que consultem novamente a API. |
+| Planilhas | SheetJS (`xlsx`) | Ler planilhas enviadas e gerar a exportação completa de auditoria e resumos. |
+| Modelo visual do Excel | Modelo original e `fflate` | Preservar as abas da apresentação e aplicar suas cores, fontes, bordas e estilos de cabeçalho às abas da carteira completa. |
+| Servidor de desenvolvimento | Vite 6 | Servir a interface localmente e criar os arquivos de produção. |
+| Ferramentas de operação | Node.js, npm e Wrangler | Instalar dependências, compilar, aplicar migrações e publicar o Worker. |
 
-As versões instaladas são controladas por [package.json](../package.json) e pelo arquivo de lock. Os aparelhos das equipes não precisam instalar Node.js, Python ou bibliotecas: usam o navegador.
+As versões exatas estão no [package.json](../package.json) e no arquivo de lock. A configuração do ambiente publicado está em [wrangler.jsonc](../wrangler.jsonc). Os usuários finais não instalam essas ferramentas: acessam o endereço do sistema pelo navegador.
 
-## Arquitetura
+# 3. Arquitetura
 
-~~~mermaid
-flowchart LR
-    U[Equipe ou supervisor] --> N[Navegador: React]
-    N -->|HTTPS /api| W[Cloudflare Worker]
-    W --> D[(D1)]
-    W --> A[Workers Assets]
-    N <-->|WebSocket /api/live| W
-    W --> O[Durable Object: aviso de mudança]
-~~~
+![Diagrama da arquitetura: navegador React, API do Worker, D1, Assets e Durable Object para avisos.](images/arquitetura.svg)
 
-O navegador nunca acessa o D1 diretamente. O Worker autentica a sessão, aplica o escopo do perfil e devolve apenas os dados permitidos. O Durable Object transmite somente o aviso de que houve alteração; ele não envia ordens, senhas nem protocolos pelo WebSocket.
+O navegador acessa a API por HTTPS e nunca se conecta diretamente ao banco. O Worker verifica a sessão e aplica as permissões antes de devolver ordens, protocolos ou fotos. O WebSocket transmite um aviso de atualização, não o conteúdo dos dados. Depois do aviso, cada navegador busca da API apenas as alterações permitidas àquela sessão.
 
-### Organização do código
+O front-end e a API estão no mesmo Worker. Os arquivos compilados do React são publicados como **Workers Assets**; a API fica sob `/api/...`. O D1 é uma dependência do Worker e o canal de avisos usa um Durable Object.
 
-| Caminho | Responsabilidade |
+## Mapa dos principais arquivos
+
+| Arquivo ou diretório | Papel |
 | --- | --- |
-| [src/App.tsx](../src/App.tsx) | Login, telas de equipe e supervisor, formulários, salvamento e sincronização. |
-| [src/Presentation.tsx](../src/Presentation.tsx) | Cálculo e gráficos da carteira atual. |
-| [src/lib/excel.ts](../src/lib/excel.ts) | Reconhecimento de abas e colunas, mapeamento de linhas e exportação Excel. |
-| [src/lib/quantity.js](../src/lib/quantity.js) | Leitura de quantidades com separadores brasileiros ou internacionais. |
-| [src/data/api.ts](../src/data/api.ts) | Chamadas HTTP e cursor de sincronização. |
-| [src/types.ts](../src/types.ts) | Tipos de ordens, perfis, importações e notificações. |
-| [src/styles.css](../src/styles.css) | Estilos e regras responsivas. |
-| [worker/index.js](../worker/index.js) | Rotas da API, regras de autorização, operações D1 e canal de avisos. |
-| [worker/access-profile-validation.js](../worker/access-profile-validation.js) | Validação dos perfis antes da gravação. |
-| [drizzle](../drizzle) | Migrações SQL do D1. |
-| [wrangler.jsonc](../wrangler.jsonc) | Worker, assets, ligação D1 e Durable Object. |
+| [src/App.tsx](../src/App.tsx) | Login, fluxo da equipe, painel, importação, protocolos, acessos e sincronização da interface. |
+| [src/Presentation.tsx](../src/Presentation.tsx) | Tabelas de apresentação da carteira e exportação da apresentação. |
+| [src/lib/presentation-data.ts](../src/lib/presentation-data.ts) | Agrupamento por frente e UTD, período, prazo e fórmulas de MTD. |
+| [src/lib/excel.ts](../src/lib/excel.ts) | Leitura e validação das planilhas e exportação da carteira completa. |
+| [src/lib/style-workbook.ts](../src/lib/style-workbook.ts) | Reaproveita os estilos do modelo visual nas quatro abas da exportação completa. |
+| [src/lib/export-presentation-workbook.ts](../src/lib/export-presentation-workbook.ts) | Preenchimento do modelo Excel da apresentação. |
+| [src/lib/quantity.js](../src/lib/quantity.js) | Conversão de quantidades com vírgula ou ponto decimal. |
+| [src/data/api.ts](../src/data/api.ts) | Chamadas autenticadas do front-end à API. |
+| [src/types.ts](../src/types.ts) | Tipos de ordens, perfis, sessão, importações e notificações. |
+| [src/styles.css](../src/styles.css) | Estilos e adaptação para telas menores. |
+| [worker/index.js](../worker/index.js) | Rotas HTTP, sessão, autorização, operações D1, validações e Durable Object. |
+| [worker/access-profile-validation.js](../worker/access-profile-validation.js) | Validação de consistência dos perfis de acesso. |
+| [drizzle](../drizzle) | Migrações SQL para o banco D1. |
 
-## Modelo de dados e regras
+# 4. Identidade, escopo e dados
 
-| Tabela D1 | Conteúdo |
+## Sessões e permissões
+
+Os perfis de equipe têm empresa, responsável, nome de exibição, código e estado ativo. A autorização é aplicada no Worker:
+
+- Perfil Neoenergia vê ordens cuja empresa é Neoenergia. O valor antigo **NPER** é normalizado como Neoenergia.
+- Perfil Vencer vê ordens da empresa Vencer.
+- A ordem precisa corresponder ao **RESPONSÁVEL** do perfil. Se o perfil tiver equipe definida, a equipe também precisa corresponder.
+- Supervisor pode consultar e administrar todas as ordens.
+- A interface aplica os mesmos filtros visuais, mas a autorização efetiva é feita no servidor.
+
+Um perfil pode estar ativo mesmo quando não há ordens para ele na carteira daquele mês. Nesse caso, a lista fica vazia e informa que não há atividades na carteira atual.
+
+As notificações de atualização podem informar equipe, pessoa, ordem e serviço a outros perfis da mesma empresa. Elas não dão acesso às ordens nem às fotos de outra equipe. A autorização continua sendo verificada quando os dados são consultados.
+
+## Modelo de persistência
+
+As migrações em `drizzle/` definem as tabelas e os índices do D1:
+
+| Tabela | Conteúdo |
 | --- | --- |
-| **work_orders** | Estado atual de cada ordem, dados importados e revisão da última alteração. |
-| **access_profiles** | Empresa, responsável, nome, código, estado e hash da senha de cada perfil. |
-| **execution_records** | Histórico de tentativas, cada uma com protocolo próprio. |
-| **photos** | Evidências dos impedimentos, ligadas ao protocolo. |
-| **imports** | Histórico das importações. |
-| **sessions** | Sessões autenticadas com token armazenado como hash. |
-| **sync_metadata** | Revisões da carteira e das mudanças incrementais. |
-| **login_attempts** | Controle de tentativas de login malsucedidas. |
+| `work_orders` | Dados da ordem e estado corrente, incluindo JSON de origem e revisão da última mudança. |
+| `access_profiles` | Código único, empresa, estado, dados públicos do perfil, sal e hash de senha. |
+| `execution_records` | Uma linha por execução ou impedimento, com protocolo único e cópia dos dados necessários para auditoria. |
+| `photos` | Evidência associada ao protocolo, com tipo de conteúdo, imagem e escopo de equipe/responsável. |
+| `imports` | Histórico das carteiras e importações complementares. |
+| `sessions` | Hash do token de sessão, perfil associado, tipo e prazo de validade. |
+| `sync_metadata` | Revisão do catálogo e das mudanças recentes. |
+| `login_attempts` | Estado de tentativas de login e bloqueios temporários. |
 
-### Escopo dos perfis
+Os dados importados da planilha são preservados no payload da ordem. Os campos identificados pela aplicação são expostos diretamente para busca, filtro e apresentação. Campos adicionais podem ser consultados em **Ver detalhes** ou **Outros dados da planilha**.
 
-O perfil é associado à **empresa** e ao valor de **RESPONSÁVEL**. Se um perfil também tiver vínculo de equipe, esse filtro é aplicado. Para fins de acesso, **NPER** da planilha é tratado como Neoenergia. O filtro é aplicado no Worker para ler ordens, registrar serviços e abrir fotos, além do filtro visual na interface. Um perfil pode continuar ativo mesmo sem ordem correspondente na carteira do mês; nesse caso, recebe uma lista vazia.
+# 5. Regras de estado e fluxo
 
-As notificações de registro são visíveis para perfis da mesma empresa. O aviso pode indicar a equipe e a pessoa que registrou, mas não amplia o acesso à lista de ordens ou às fotos.
-
-### Estado de uma ordem
-
-- **Pendente:** disponível para registro autorizado.
-- **Executada:** concluída após confirmação do servidor; sai das pendentes.
-- **Impedimento:** é uma tentativa registrada em **execution_records**. A ordem continua **pendente**, podendo receber uma nova tentativa.
-
-A ordem atual guarda o último registro relevante; o histórico preserva as tentativas separadamente. Ao registrar uma execução, o servidor também grava o operador, horário, quantidade realmente informada e protocolo. Uma tentativa concorrente sobre ordem já concluída é recusada.
-
-### Importação, troca mensal e exportação
-
-- **Nova carteira:** o supervisor informa o mês e ano de referência; a interface procura uma aba com número da ordem, **EMPRESA**, **EQUIPE** e **RESPONSÁVEL** e prefere **ACOMPANHAMENTO** quando presente. A prévia mostra linhas aceitas e ignoradas. Linhas **CANCELAR ORDEM** e linhas incompletas não entram. Cabeçalhos repetidos bloqueiam a importação. A carteira ativa precisa estar vazia para importar o novo mês. O período é salvo em cada ordem e no histórico da importação, sem depender do nome do arquivo.
-- **Ordens complementares:** exigem também serviço e quantidade ajustada positiva. O servidor insere apenas as linhas novas, preservando as ordens existentes e seus registros. As novas ordens herdam o período da carteira ativa. A chave de duplicidade é **número da ordem + empresa + responsável**.
-- **Troca de mês:** o supervisor exporta a carteira completa, confirma a exclusão e importa o arquivo novo. A exclusão preserva perfis e histórico de protocolos. O servidor confere a revisão da carteira antes de excluir; uma mudança posterior à exportação exige nova conferência.
-- **Exportação:** inclui as colunas da origem e campos de execução, observação, impedimento, operador, horário e protocolo. Gera também resumos por equipe e responsável. O arquivo não conserva a formatação, mesclagens e fórmulas exatas do arquivo recebido.
-
-Na importação inicial, a carteira é gravada como conjunto de ordens. Registrar uma execução altera somente a ordem afetada, a revisão e o histórico, além da foto se houver. Editar um perfil não regrava as ordens. A importação complementar insere somente as ordens novas.
-
-### Medidas da apresentação
-
-A apresentação usa os dados das ordens ativas, já limitados pelo perfil no servidor:
-
-| Indicador | Cálculo |
+| Estado ou evento | Consequência |
 | --- | --- |
-| Quantidade ajustada | Soma de **QTD. AJUSTADA** da seleção. |
-| Quantidade executada na apresentação | Soma de **QTD. AJUSTADA** das ordens com estado **executada**. |
-| Quantidade pendente | Quantidade ajustada menos a quantidade ajustada das ordens executadas. |
-| % mês | Quantidade ajustada concluída dividida pela quantidade ajustada da carteira. |
-| Meta até hoje | Carteira × dias úteis considerados ÷ dias úteis do mês. |
-| % MTD | Quantidade ajustada concluída dividida pela meta até hoje. Quando ainda não há dia útil considerado, o indicador fica vazio. |
-| Aderência da carteira | Número de ordens executadas, com % mês e % MTD calculados sobre a contagem de ordens. |
-| Quantidade realmente executada | Valor informado pela equipe; aparece no protocolo e na exportação, separadamente dos totais acima. |
+| Importação inicial | Cria a carteira ativa, atribui o período escolhido pelo supervisor e deixa as ordens como pendentes. |
+| Execução confirmada | Atualiza a ordem para executada e cria o registro de auditoria com protocolo. A ordem sai da lista pendente. |
+| Impedimento confirmado | Cria registro e protocolo, mas mantém a ordem pendente para nova tentativa. A foto, quando existe, fica ligada ao protocolo. |
+| Outra equipe concluiu a ordem primeiro | A atualização concorrente é recusada pelo servidor; a equipe deve atualizar a carteira. |
+| Importação complementar | Insere apenas ordens novas. Mantém estado e protocolos das ordens existentes. |
+| Encerramento do mês | Ordens que continuam pendentes passam a aparecer nas métricas como não executadas no prazo; não é necessário regravar cada ordem para mudar a classificação. |
+| Exclusão para troca mensal | Remove a carteira ativa somente após exportação completa e confirmação; perfis e protocolos históricos permanecem. |
 
-Exemplo: se a ordem tem quantidade ajustada **6** e a equipe informa **3 realizadas**, a apresentação considera **6** após a conclusão da ordem. O protocolo guarda **3** e a observação da diferença.
+## Importação e identificação de duplicatas
 
-O período vem do mês e ano informados pelo supervisor na importação. Carteiras antigas, importadas antes deste campo, continuam usando o mês identificável no nome do arquivo; se ele não existir, usa-se o mês corrente. Dias úteis são segunda a sexta, sem calendário de feriados, como na fórmula enviada com o argumento de feriados igual a zero. Durante o mês, os dias considerados contam do início do mês até a data atual, inclusive, e subtraem **um dia útil**; o resultado nunca fica negativo. Ao terminar o último dia do mês no fuso de Recife, a meta final passa a considerar todos os dias úteis e as ordens pendentes entram nas métricas como **não executadas no prazo**. O Worker rejeita novas execuções ou impedimentos dessa carteira e impede importações complementares; uma pendência só volta para a equipe se for incluída na carteira seguinte. Essa classificação é calculada a partir da data e do período salvo, sem atualizar todas as linhas no D1.
+Para a carteira mensal, o supervisor informa mês e ano na interface; o sistema não depende do nome do arquivo para determinar o período. A aplicação reconhece uma aba que contém número da OS, **EMPRESA**, **EQUIPE** e **RESPONSÁVEL** e prefere **ACOMPANHAMENTO** quando apropriada. Linhas sem os campos obrigatórios são ignoradas. Linhas com o valor **CANCELAR ORDEM** em um campo são desconsideradas. Cabeçalhos repetidos precisam ser corrigidos antes de importar.
 
-As frentes são identificadas a partir de **SERVIÇO**, **EQUIPE**, **AVANÇO** e **EMPRESA**. A tela de apresentação reproduz os blocos visíveis da planilha de referência: Poda LM, Bobcat, LV e Carteira. O último bloco agrupa pela coluna **AVANÇO** e termina com a aderência medida em ordens. A UTD vem da coluna **UTD** da planilha; quando ela não existe, usa o responsável como referência. As cores dos indicadores seguem os limites da planilha: vermelho abaixo de 90%, amarelo de 90% a menos de 95% e verde a partir de 95%. Os valores usam os registros atuais e não reutilizam resultados antigos da planilha.
+Na importação complementar também são exigidos serviço e quantidade ajustada numérica maior que zero. O servidor compara **número da ordem + empresa + responsável** para não inserir uma repetição. A quantidade de linhas adicionadas, duplicadas e ignoradas aparece no resultado da importação.
 
-A exportação da apresentação usa um modelo limpo das abas originais **APRESENTAÇÃO** e **ACOMPANHAMENTO**. As fórmulas de MTD são renovadas para o período da carteira; fórmulas antigas com referências quebradas ou metas específicas sem regra definida não são copiadas. Se surgir uma UTD ou um avanço sem linha própria no modelo, o valor é agregado em uma linha livre da mesma seção, mantendo o número de linhas e as cores. A aba **ACOMPANHAMENTO** mantém as 21 colunas e o padrão visual original, preenchidos apenas com as ordens autorizadas ao acesso. A exportação administrativa **Exportar carteira** continua sendo a opção com colunas adicionais de execução e auditoria.
+O encerramento mensal usa o fuso **America/Recife**. A carteira vence no último dia do mês de referência. Depois desse dia, a API não permite à equipe registrar execução ou impedimento nessa carteira; a supervisão pode incluir as ordens pendentes na carteira seguinte.
 
-## API e sincronização
+# 6. Indicadores e apresentação
+
+A tela de apresentação segue os blocos do modelo entregue para o projeto: **Poda LM**, **Bobcat**, **LV** e **Carteira**. Os dados são recalculados a partir da carteira e dos registros atuais.
+
+| Indicador | Regra |
+| --- | --- |
+| Carteira | Soma de `QTD. AJUSTADA` no grupo. |
+| Realizado | Soma de `QTD. AJUSTADA` das ordens executadas no grupo. |
+| Pendente | Quantidade ajustada ainda não executada. |
+| `% mês` | Realizado dividido pela carteira total do período. |
+| Meta proporcional | Carteira × dias úteis considerados ÷ dias úteis no mês. |
+| `% MTD` | Realizado dividido pela meta proporcional; fica sem valor quando a meta proporcional ainda é zero. |
+| Aderência de carteira | Ordens executadas ÷ total de ordens. É a linha que usa quantidade de ordens, não a quantidade ajustada. |
+| Quantidade realmente executada | Valor informado pela equipe no formulário; aparece no protocolo e na exportação da carteira. Não substitui os valores ajustados dos indicadores da apresentação. |
+
+Durante o mês, dias úteis considerados são os dias de segunda a sexta transcorridos até a data atual, menos um dia útil, sem resultado negativo. Não há calendário de feriados, seguindo a fórmula de referência com lista de feriados vazia. Após o último dia do mês, a meta final usa todos os dias úteis do mês. O período vem do mês e ano escolhidos na importação; para carteiras anteriores a esse campo, há compatibilidade com mês e ano legíveis no nome do arquivo.
+
+Os sinais de cor seguem as faixas do modelo: vermelho abaixo de 90%, amarelo de 90% a menos de 95% e verde a partir de 95%. O sistema usa tabelas para facilitar a comparação quando os valores têm escalas muito diferentes. Em telas estreitas, as linhas se reorganizam em cartões.
+
+## Dois tipos de exportação
+
+- **Exportar carteira** produz um arquivo de auditoria da carteira inteira, com os campos de execução, observação, impedimento, pessoa, horário e protocolo. É o arquivo a guardar antes de excluir a carteira mensal.
+- **Exportar apresentação** gera somente as abas **APRESENTAÇÃO** e **ACOMPANHAMENTO**, no modelo visual fornecido. Mantém as cores, estrutura, mesclagens e organização do modelo, com os dados permitidos ao usuário. Não é uma cópia formatada da planilha inteira.
+
+As quatro abas da exportação completa usam agora a mesma paleta, tipografia, bordas e estilos de cabeçalho do modelo de apresentação. A largura das colunas continua adaptada ao conteúdo operacional para facilitar a leitura dos campos de auditoria. O arquivo mantém seus resumos e fórmulas; a exportação da apresentação segue preservando a estrutura e as mesclagens originais do modelo.
+
+# 7. Sincronização e consumo do banco
+
+Uma mudança salva atualiza a revisão da carteira. O Durable Object publica um aviso. O navegador que recebe o aviso solicita mudanças à API com seu cursor; as respostas incrementais incluem apenas ordens alteradas e notificações autorizadas. O navegador também consulta aproximadamente a cada dois minutos e ao voltar para primeiro plano. Se o WebSocket não estiver conectado, há uma consulta de contingência a cada 15 segundos até reconectar.
+
+As consultas periódicas **não regravam a carteira**. Quando não há novidades, a API devolve um estado sem ordens alteradas. Uma escrita ocorre em ações como importar ou remover linhas, mudar perfis e registrar execução/impedimento.
+
+| Ação | Efeito típico no D1 |
+| --- | --- |
+| Abrir uma página ou atualizar a carteira | Leituras para autenticação, revisão e dados permitidos. |
+| Consultar periodicamente | Leituras de revisão; quando necessário, leitura somente das mudanças. |
+| Importar uma carteira grande | Escrita das ordens, em volume proporcional às linhas aceitas, mais o registro da importação e revisões. |
+| Acrescentar ordens | Escrita apenas das linhas novas e do histórico da importação. |
+| Registrar execução ou impedimento | Atualiza a ordem afetada e grava um registro; adiciona uma linha de foto se enviada. As instruções são enviadas em lote transacional. |
+| Alterar um perfil | Atualiza os perfis alterados; não regrava todas as ordens. |
+
+Uma planilha com 1.385 ordens requer muitas escritas na primeira importação porque cada ordem é uma linha persistida. Isso é diferente de 1.385 gravações repetidas a cada consulta. O limite gratuito diário de linhas escritas do D1 era um limite de serviço e podia ser consumido por operações de outras bases D1 na mesma conta ou por importações e exclusões em volume. Os registros de erro fornecidos confirmam que o limite da conta foi atingido, mas, sem o histórico completo de uso de cada base, não permitem atribuir o total a uma ação isolada.
+
+## Erros que foram observados e corrigidos
+
+1. **`ReferenceError: observacao is not defined` no `POST /api/executions`:** o Worker calculava a variável `observation`, mas tentava gravar uma variável com outro nome. Isso interrompia o fluxo antes de devolver o protocolo. O código foi corrigido para persistir `observation`, e a gravação da ordem, do protocolo e da eventual foto é executada em lote transacional. A equipe confirmou depois um protocolo gerado com sucesso.
+2. **`Pbkdf2 failed: iteration counts above 100000 are not supported`:** a Cloudflare Web Crypto não aceitava o valor anterior de 120.000 iterações. Novas senhas passaram a usar 100.000 iterações. Perfis com hashes antigos incompatíveis precisam ter a senha renovada por meio de um novo acesso.
+3. **`D1_ERROR: exceeded D1's free tier daily row write limit`:** a conta gratuita havia alcançado o limite diário de linhas escritas. Esse erro é diferente do `ReferenceError` no Worker. A ativação do plano pago ampliou a franquia e removeu o bloqueio de cota que impedia os testes naquele momento. O plano não corrige bugs de código e o consumo continua sujeito às franquias e à cobrança vigentes.
+
+Para investigar novos casos, correlacione a referência exibida na interface com o `requestId`/`rayId` nos logs do Worker. No D1, diferencie métricas de **requisições**, **linhas lidas** e **linhas escritas**. A importação inicial, uma complementação, uma atualização periódica e uma gravação de execução têm efeitos diferentes.
+
+# 8. API principal
 
 | Rota | Finalidade |
 | --- | --- |
-| **POST /api/login**, **GET /api/session**, **POST /api/logout** | Autenticar, recuperar e encerrar a sessão. |
-| **GET /api/state** | Carteira completa ou alterações desde o cursor informado. |
-| **GET /api/live** | WebSocket autenticado para avisos de mudança. |
-| **POST /api/executions** | Registrar execução ou impedimento. |
-| **GET /api/admin/executions** | Consultar o histórico paginado do supervisor. |
-| **POST /api/admin/state** | Salvar mudanças administrativas, como perfis e carteira inicial. |
-| **POST /api/admin/orders/import** | Incluir ordens complementares. |
-| **POST /api/admin/orders/clear** | Excluir a carteira ativa após conferência de revisão. |
-| **GET /api/photos/:protocol** | Abrir evidência conforme as permissões da sessão. |
+| `POST /api/login` | Validar código, senha e empresa e abrir uma sessão. |
+| `GET /api/session` | Recuperar a sessão existente e seu estado inicial autorizado. |
+| `POST /api/logout` | Encerrar a sessão. |
+| `GET /api/state` | Ler o estado inicial ou as alterações posteriores ao cursor de sincronização. |
+| `GET /api/live` | Abrir o canal WebSocket de avisos. |
+| `POST /api/executions` | Registrar execução ou impedimento. |
+| `GET /api/admin/executions` | Consultar o histórico paginado de protocolos da supervisão. |
+| `POST /api/admin/state` | Persistir alterações administrativas em ordens, perfis e importações conforme as seções alteradas. |
+| `POST /api/admin/orders/import` | Inserir ordens complementares. |
+| `POST /api/admin/orders/clear` | Excluir a carteira ativa após conferência da exportação e revisão. |
+| `GET /api/photos/:protocol` | Servir uma evidência quando a sessão tiver permissão. |
 
-Após uma gravação confirmada, o Worker publica um aviso no Durable Object. Cada navegador consulta **/api/state** com seu cursor e recebe ordens alteradas e notificações autorizadas. Uma troca completa de carteira exige recarregar o conjunto pertinente. Também há consulta a cada cerca de **2 minutos** e quando a aba volta ao primeiro plano. Se o WebSocket estiver desconectado, a interface tenta consultar a cada **15 segundos** até reconectar. Assim, o aviso acelera a atualização entre aparelhos sem fazer uma gravação no D1 por aparelho.
+# 9. Segurança e privacidade
 
-As quotas de **requisições**, **linhas lidas** e **linhas gravadas** são métricas distintas. A quantidade depende dos acessos e do uso real. Consulte o painel da conta e a [documentação de preços e limites](https://developers.cloudflare.com/workers/platform/pricing/) antes de fazer projeções de custo; o plano pago amplia franquias, mas não corrige erros de lógica ou configuração.
+- O servidor decide o que cada sessão pode consultar e alterar. Não confie apenas em filtros visuais do navegador.
+- Cookies de sessão são **HttpOnly**, **Secure** e **SameSite=Lax**, com expiração de 12 horas.
+- Tokens são persistidos no banco como hash. Senhas são derivadas com PBKDF2/SHA-256 e salt aleatório; o D1 guarda salt e hash, não a senha em texto claro.
+- Os segredos administrativos são variáveis secretas do Worker. Não coloque senhas de supervisor, de equipe ou chaves em documentação versionada, prints ou commits.
+- O Worker bloqueia operações de escrita de origens diferentes e valida permissões para abrir fotos.
+- Editar, desativar ou excluir um perfil invalida sessões abertas desse perfil. Excluir perfil não elimina o histórico de auditoria.
+- A aplicação prepara imagens JPEG, PNG ou WebP com limite aproximado de 1,2 MB. Atualmente as evidências são mantidas no D1 codificadas em base64; o armazenamento pode ser revisto se o volume de imagens crescer.
+- As notificações não enviam registros completos nem ampliam acesso às ordens.
 
-## Segurança
+# 10. Desenvolvimento local
 
-- O Worker valida a sessão antes de liberar ordens, histórico, fotos e o WebSocket; rotas administrativas exigem sessão de supervisor.
-- Requisições de alteração feitas de outra origem são recusadas.
-- O cookie de sessão usa **HttpOnly**, **Secure** e **SameSite=Lax**.
-- Senhas dos perfis são derivadas com **PBKDF2 SHA-256 e 100.000 iterações**; o D1 guarda salt e hash. Os segredos **SUPERVISOR_CODE** e **SUPERVISOR_PASSWORD** pertencem à configuração do Worker, nunca ao repositório.
-- Editar, desativar ou excluir um perfil invalida suas sessões abertas. O histórico de protocolos não é apagado com o perfil.
-- As fotos aceitas são JPEG, PNG ou WebP, com limite aproximado de **1,2 MB** por envio. Nesta versão elas ficam no D1 em base64.
+Requisitos: Node.js 20 ou superior e npm. Na raiz do repositório:
 
-## Desenvolvimento local
-
-Requer Node.js 20 ou mais recente e npm. Na raiz do repositório:
-
-~~~bash
+```bash
 npm ci
 npm run cf:db:migrate:local
 npm run build
-~~~
+```
 
-Para exercitar interface e API juntas, crie um arquivo **.dev.vars** local com credenciais **fictícias de teste** para **SUPERVISOR_CODE** e **SUPERVISOR_PASSWORD** e execute:
+`npm run dev` inicia somente a interface pelo Vite; as rotas de API não ficam disponíveis por esse comando. Para trabalhar com o Worker e o D1 local, configure `.dev.vars` com credenciais fictícias de teste e use:
 
-~~~bash
+```bash
 npx wrangler dev --local
-~~~
+```
 
-O arquivo **.dev.vars** é ignorado pelo Git. O Wrangler local usa D1 e Durable Objects locais; não use dados nem credenciais reais em testes. **npm run dev** inicia só o Vite e serve para trabalhar na interface, sem a API completa. Os comandos de verificação disponíveis são **npm test** e **npm run build**.
+O arquivo `.dev.vars` é ignorado pelo Git. Use os bancos e Durable Objects locais para desenvolvimento. Nunca faça testes destrutivos ou de gravação em massa no banco de produção. Depois de qualquer alteração, confira o build (`npm run build`) e o comportamento correspondente antes de publicar.
 
-## Publicação e manutenção
+# 11. Publicação e operação
 
-O ramo **main** está conectado ao Workers Builds da Cloudflare. Após o push, confira o resultado do build e a versão servida pelo endereço publicado. Uma aba do navegador aberta antes do deploy continua usando o JavaScript antigo até ser recarregada.
+O ramo `main` está conectado a Workers Builds. Um push inicia compilação e publicação automática. O endereço publicado é:
 
-A instalação atual já tem o identificador do D1 em **wrangler.jsonc**. Para uma instalação nova em outra conta, crie outro D1, altere o identificador no arquivo, aplique as migrações SQL e configure os dois segredos do supervisor. Não recrie o banco da instalação atual para uma publicação comum. Alterações futuras nas tabelas exigem migração D1; a migração do Durable Object está declarada no Wrangler. A publicação manual, quando necessária e autenticada na conta correta, usa **npm run deploy**.
+[controle-manutencao-neoenergia.programation-077.workers.dev](https://controle-manutencao-neoenergia.programation-077.workers.dev)
 
-Na operação mensal, guarde e confira a exportação antes de excluir a carteira. Monitore uso do D1, falhas e referências de erro do Worker. O armazenamento de fotos no D1 e a ausência de fila offline são limites de arquitetura a reavaliar se o volume de uso crescer. Nenhuma estimativa de economia de tempo ou de produtividade foi validada aqui; resultados operacionais devem ser medidos e aprovados pela supervisão antes de divulgação.
+Após uma publicação, confira o estado do build e a versão do Worker. Oriente os usuários a recarregar uma página que estava aberta antes do deploy.
+
+O D1 da instalação atual está definido em `wrangler.jsonc`; uma publicação comum não exige criar ou apagar o banco. Uma instalação em outra conta exige criar um novo D1, apontar a configuração para ele, aplicar as migrações e configurar os segredos do supervisor. Mudanças futuras de esquema devem entrar como nova migração SQL. O comando de publicação autenticada é `npm run deploy`.
+
+Para a rotina mensal, exporte e confira a carteira antes de excluí-la. Monitore logs do Worker, referências de erro e uso de D1. A classificação pós-prazo é calculada com base no período da ordem, sem regravar todo o catálogo. Se a frequência de atualizações, o volume de fotos ou o número de usuários crescerem, reavalie armazenamento e observabilidade com dados reais de uso.
+
+## Leituras adicionais
+
+- [Manual de uso](manual-do-usuario.md)
+- [README do repositório](../README.md)
+- [Documentação de Workers](https://developers.cloudflare.com/workers/)
+- [Documentação de D1](https://developers.cloudflare.com/d1/)
+- [Limites e preços da Cloudflare](https://developers.cloudflare.com/workers/platform/pricing/)
+- [React](https://react.dev/)
+- [TypeScript](https://www.typescriptlang.org/docs/)
+
+---
+
+**Nota de operação:** valores de franquias e preço podem mudar e dependem do plano e da conta. Consulte o painel Cloudflare antes de projetar custo ou volume.

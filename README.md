@@ -2,12 +2,18 @@
 
 Aplicação web para reunir a carteira mensal de ordens, distribuir a visualização por empresa e responsável e registrar execuções ou impedimentos com protocolo. O supervisor importa, acompanha e exporta a carteira; cada equipe usa seu próprio acesso no navegador.
 
+**Idealização e desenvolvimento:** João Henrique Ferreira.
+
 O sistema publicado está em [controle-manutencao-neoenergia.programation-077.workers.dev](https://controle-manutencao-neoenergia.programation-077.workers.dev). Celulares e computadores precisam apenas do navegador e de conexão com a internet.
 
 ## Documentação
 
-- [Manual de uso](docs/manual-do-usuario.md) — tarefas das equipes e do supervisor, significado dos números e solução de problemas comuns.
-- [Documentação técnica](docs/documentacao-do-projeto.md) — tecnologias, regras de negócio, arquitetura, dados, sincronização, desenvolvimento e publicação.
+- [Manual de uso em Markdown](docs/manual-do-usuario.md) — guia visual, por etapa, para equipes e supervisão.
+- [Manual de uso em PDF](docs/manual-do-usuario.pdf) — versão pronta para leitura e compartilhamento, com telas ilustrativas em alta resolução.
+- [Documentação técnica em Markdown](docs/documentacao-do-projeto.md) — arquitetura, tecnologias, regras, banco de dados, segurança, limites e operação.
+- [Documentação técnica em PDF](docs/documentacao-tecnica.pdf) — versão diagramada para leitura e compartilhamento.
+
+As imagens dos documentos mostram a interface usando exclusivamente dados demonstrativos fictícios.
 
 ## Como funciona
 
@@ -17,7 +23,18 @@ O sistema publicado está em [controle-manutencao-neoenergia.programation-077.wo
 4. As telas abertas recebem avisos de mudanças e consultam os dados autorizados. A apresentação usa **QTD. AJUSTADA**; apenas a aderência final conta ordens.
 5. O supervisor pode acrescentar ordens durante o mês, exportar a carteira e fazer a troca mensal.
 
-A importação não modifica o arquivo original. A exportação da carteira completa inclui campos de execução e auditoria; a exportação da apresentação conserva as abas originais de apresentação e acompanhamento.
+A importação não modifica o arquivo original. A exportação da carteira completa inclui campos de execução e auditoria, abas de resumo e fórmulas com a identidade visual do modelo Excel. A exportação da apresentação conserva a estrutura, as cores e as fontes do arquivo original.
+
+## Correções importantes dos erros de produção
+
+Durante os primeiros testes, o envio da execução retornava erro 500 por `ReferenceError: observacao is not defined`. O Worker preparava o conteúdo em `observation`, mas usava um identificador inexistente ao montar a ordem. O código foi corrigido para gravar a observação corretamente; a gravação da ordem, do protocolo e da eventual evidência passou a ser confirmada em lote transacional. Depois da publicação, foi confirmado um protocolo gerado com sucesso.
+
+Também foram identificados dois problemas independentes:
+
+- **Senha:** o valor antigo de PBKDF2, 120.000 iterações, ultrapassava o limite aceito pela Web Crypto da Cloudflare. Novas senhas passaram a usar 100.000 iterações; perfis gravados com um hash legado incompatível precisam ter a senha renovada.
+- **Cota do D1 gratuito:** a Cloudflare informou que a conta havia atingido o limite diário gratuito de linhas escritas. Uma importação inicial grava cada ordem aceita, mas consultas periódicas não regravam a carteira: quando não há mudanças, o servidor retorna apenas o cursor atualizado. A importação complementar insere somente ordens novas, e uma execução altera a ordem envolvida e cria seu registro de auditoria. O plano Workers Paid ampliou a franquia e removeu o bloqueio de cota que impedia aqueles testes; isso não corrige eventuais erros de código e o uso continua sujeito aos limites e à cobrança vigentes.
+
+O limite de linhas escritas do D1 é diferente de requisições HTTP e de linhas lidas. A Cloudflare aplicava a franquia ao uso da conta, portanto o erro de cota, por si só, não prova que uma equipe ou um único registro tenha consumido todo o volume. A documentação técnica explica os tipos de operação e o que os logs confirmaram.
 
 ## Tecnologias principais
 

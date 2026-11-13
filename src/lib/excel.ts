@@ -2,6 +2,7 @@ import type * as XLSX from 'xlsx';
 import type { Order, OrderStatus } from '../types';
 import { isPortfolioExpired, presentationPeriod } from './presentation-data.js';
 import { parseNumericQuantity } from './quantity.js';
+import { styleWorkbookLikeTemplate } from './style-workbook.js';
 
 export interface ParsedWorkbook {
   workbook: XLSX.WorkBook;
@@ -300,7 +301,7 @@ function setFilter(sheet: XLSX.WorkSheet, rowCount: number, columnCount: number)
   sheet['!autofilter'] = { ref: `A1:${columnName(columnCount - 1)}${Math.max(rowCount, 1)}` };
 }
 
-/** Exports a consolidated workbook inspired by the supplied Controle workbook, without its monthly order data. */
+/** Exports the complete audit workbook using the colors and typography of the supplied Excel model. */
 export async function exportControlWorkbook(orders: Order[], fileName = 'controle-execucao-neoenergia.xlsx'): Promise<void> {
   const XLSX = await import('xlsx');
   const workbook = XLSX.utils.book_new();
@@ -482,5 +483,22 @@ export async function exportControlWorkbook(orders: Order[], fileName = 'control
   setFilter(byResponsible, responsibleRows.length, responsibleRows[0].length);
   XLSX.utils.book_append_sheet(workbook, byResponsible, 'POR RESPONSÁVEL');
 
-  XLSX.writeFile(workbook, fileName);
+  const generated = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const modelResponse = await fetch('/modelo-apresentacao.xlsx');
+  if (!modelResponse.ok) throw new Error('Modelo visual da planilha indisponível.');
+  const styledWorkbook = styleWorkbookLikeTemplate(
+    new Uint8Array(generated),
+    new Uint8Array(await modelResponse.arrayBuffer()),
+  );
+  const file = new Blob([styledWorkbook as BlobPart], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
